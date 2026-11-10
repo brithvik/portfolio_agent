@@ -1,0 +1,7 @@
+.env
+.venv*/
+__pycache__/
+*.tfstate
+*.tfstate.*
+.terraform/
+terraform/**/*-config
