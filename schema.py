@@ -36,6 +36,34 @@ STATEMENTS = [
     )""",
     "CREATE INDEX IF NOT EXISTS news_symbols_idx ON news USING GIN (symbols)",
     "CREATE INDEX IF NOT EXISTS news_created_idx ON news (created_at DESC)",
+
+    # The agent's audit log: every run, and every step inside it
+    """CREATE TABLE IF NOT EXISTS agent_runs (
+        id            BIGSERIAL PRIMARY KEY,
+        kind          TEXT NOT NULL,            -- 'ask' or 'briefing'
+        question      TEXT NOT NULL,
+        status        TEXT NOT NULL DEFAULT 'running',   -- running, done, failed
+        answer        TEXT,
+        model         TEXT,
+        steps         INTEGER NOT NULL DEFAULT 0,
+        input_tokens  INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0,
+        error         TEXT,
+        started_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+        finished_at   TIMESTAMPTZ
+    )""",
+    """CREATE TABLE IF NOT EXISTS agent_steps (
+        run_id      BIGINT NOT NULL REFERENCES agent_runs(id),
+        step        INTEGER NOT NULL,
+        kind        TEXT NOT NULL,              -- 'model' or 'tool'
+        name        TEXT,                       -- model name or tool name
+        args        JSONB,
+        result      JSONB,
+        duration_ms INTEGER,
+        error       TEXT,
+        at          TIMESTAMPTZ NOT NULL DEFAULT now()
+    )""",
+    "CREATE INDEX IF NOT EXISTS agent_steps_run_idx ON agent_steps (run_id, step)",
 ]
 
 

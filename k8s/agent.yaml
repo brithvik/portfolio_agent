@@ -1,0 +1,49 @@
+# ${app_image} is filled in by Terraform, so the version lives in one place.
+# The daily briefing, written by the agent after the market closes (4:15 PM ET, weekdays).
+# Run one any time with:  kubectl create job --from=cronjob/briefing briefing-now
+#
+# Note what this pod does NOT get: the alpaca-credentials secret. The agent reads only what
+# the collectors saved in PostgreSQL, so it has no path to the brokerage at all.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: briefing
+spec:
+  schedule: "15 16 * * 1-5"
+  timeZone: America/New_York
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 600   # a hard stop: no run lasts more than 10 minutes
+      template:
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+          containers:
+            - name: briefing
+              image: ${app_image}
+              imagePullPolicy: IfNotPresent
+              command: ["python", "agent.py", "briefing"]
+              envFrom:
+                - secretRef:
+                    name: gemini-credentials
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-credentials
+                      key: DATABASE_URL
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests: { memory: 128Mi, cpu: 50m }
+                limits: { memory: 384Mi }

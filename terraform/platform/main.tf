@@ -20,7 +20,7 @@ terraform {
 variable "app_image" {
   description = "The app image. The only place the version is set."
   type        = string
-  default     = "portfolio-agent:v2"
+  default     = "portfolio-agent:v3"
 }
 
 # ---------- Connect to the cluster built by layer 1 ----------
@@ -102,6 +102,19 @@ resource "kubernetes_secret_v1" "alpaca" {
   }
 }
 
+# The agent's LLM key. Only the agent's pods get this secret, and the agent never gets
+# alpaca-credentials, so neither secret is ever in the same place.
+resource "kubernetes_secret_v1" "gemini" {
+  metadata {
+    name = "gemini-credentials"
+  }
+  data = {
+    GEMINI_API_KEY        = local.env["GEMINI_API_KEY"]
+    GEMINI_MODEL          = local.env["GEMINI_MODEL"]
+    GEMINI_FALLBACK_MODEL = lookup(local.env, "GEMINI_FALLBACK_MODEL", "")
+  }
+}
+
 # ---------- The app: every YAML file in the k8s folder ----------
 data "kubectl_path_documents" "app" {
   pattern = "${path.module}/../../k8s/*.yaml"
@@ -119,6 +132,7 @@ resource "kubectl_manifest" "app" {
     terraform_data.load_image,
     kubernetes_secret_v1.postgres,
     kubernetes_secret_v1.alpaca,
+    kubernetes_secret_v1.gemini,
   ]
 }
 
@@ -126,5 +140,6 @@ output "next_steps" {
   value = <<-EOT
     Platform is up. Check it with:   kubectl get pods
     Take a snapshot now with:        kubectl create job --from=cronjob/snapshot snapshot-test
+    Get a briefing now with:         kubectl create job --from=cronjob/briefing briefing-now
   EOT
 }
