@@ -37,6 +37,27 @@ STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS news_symbols_idx ON news USING GIN (symbols)",
     "CREATE INDEX IF NOT EXISTS news_created_idx ON news (created_at DESC)",
 
+    # What each holding is, so the tools (not the model) can total exposure by sector.
+    # sector uses the standard GICS sectors; "group" is a looser label like "Mega-cap tech".
+    """CREATE TABLE IF NOT EXISTS securities (
+        symbol TEXT PRIMARY KEY,
+        name   TEXT NOT NULL,
+        kind   TEXT NOT NULL,      -- 'stock' or 'fund'
+        sector TEXT NOT NULL,
+        grp    TEXT
+    )""",
+    """INSERT INTO securities (symbol, name, kind, sector, grp) VALUES
+        ('NVDA',  'NVIDIA',              'stock', 'Information Technology', 'Mega-cap tech'),
+        ('AAPL',  'Apple',               'stock', 'Information Technology', 'Mega-cap tech'),
+        ('MSFT',  'Microsoft',           'stock', 'Information Technology', 'Mega-cap tech'),
+        ('GOOGL', 'Alphabet (Google)',   'stock', 'Communication Services', 'Mega-cap tech'),
+        ('AMZN',  'Amazon',              'stock', 'Consumer Discretionary', 'Mega-cap tech'),
+        ('VOO',   'Vanguard S&P 500 ETF','fund',  'Diversified index fund', NULL),
+        ('JPM',   'JPMorgan Chase',      'stock', 'Financials',             NULL),
+        ('KO',    'Coca-Cola',           'stock', 'Consumer Staples',       NULL),
+        ('XOM',   'Exxon Mobil',         'stock', 'Energy',                 NULL)
+       ON CONFLICT (symbol) DO NOTHING""",
+
     # The agent's audit log: every run, and every step inside it
     """CREATE TABLE IF NOT EXISTS agent_runs (
         id            BIGSERIAL PRIMARY KEY,

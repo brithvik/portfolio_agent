@@ -20,7 +20,7 @@ terraform {
 variable "app_image" {
   description = "The app image. The only place the version is set."
   type        = string
-  default     = "portfolio-agent:v3"
+  default     = "portfolio-agent:v4"
 }
 
 # ---------- Connect to the cluster built by layer 1 ----------

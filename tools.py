@@ -17,30 +17,85 @@ def _f(x):
 
 
 def get_portfolio(conn):
-    """Latest snapshot: total value, cash, and each position with its share of the portfolio."""
+    """Latest snapshot, plus every total the model might need, computed here in code.
+
+    LLMs are unreliable at arithmetic, so the rule is: the tools do the math, and the model
+    only explains it. Every combined percentage is in "totals", ready to quote.
+    """
     snap = conn.execute(
         "SELECT taken_at, equity, cash FROM account_snapshots ORDER BY taken_at DESC LIMIT 1"
     ).fetchone()
     if not snap:
         return {"error": "No snapshots yet. The collector hasn't run during market hours."}
     taken_at, equity, cash = snap
+    equity, cash = float(equity), float(cash)
     rows = conn.execute(
-        """SELECT symbol, qty, current_price, market_value, cost_basis, unrealized_pl
-           FROM position_snapshots WHERE taken_at = %s ORDER BY market_value DESC""",
+        """SELECT p.symbol, p.qty, p.current_price, p.market_value, p.cost_basis,
+                  p.unrealized_pl, s.name, s.kind, s.sector, s.grp
+           FROM position_snapshots p LEFT JOIN securities s USING (symbol)
+           WHERE p.taken_at = %s ORDER BY p.market_value DESC""",
         (taken_at,),
     ).fetchall()
-    equity = float(equity)
-    positions = [{
-        "symbol": s, "shares": round(float(q), 4), "price": _f(p), "market_value": _f(mv),
-        "cost_basis": _f(cb), "unrealized_pl": _f(pl),
-        "unrealized_pl_pct": round(float(pl) / float(cb) * 100, 2) if cb and pl is not None else None,
-        "portfolio_weight_pct": round(float(mv) / equity * 100, 2) if equity else None,
-    } for s, q, p, mv, cb, pl in rows]
+
+    def pct(x):
+        return round(x / equity * 100, 2) if equity else None
+
+    positions = []
+    for sym, q, price, mv, cb, pl, name, kind, sector, grp in rows:
+        mv, cb, pl = float(mv), (float(cb) if cb is not None else None), (float(pl) if pl is not None else None)
+        positions.append({
+            "symbol": sym, "name": name or sym, "kind": kind or "unknown",
+            "sector": sector or "Unclassified", "group": grp,
+            "shares": round(float(q), 4), "price": _f(price), "market_value": round(mv, 2),
+            "unrealized_pl": _f(pl),
+            "unrealized_pl_pct": round(pl / cb * 100, 2) if cb and pl is not None else None,
+            "portfolio_weight_pct": pct(mv),
+        })
+
+    def top(n):
+        chosen = positions[:n]
+        return {"symbols": [p["symbol"] for p in chosen],
+                "weight_pct": pct(sum(p["market_value"] for p in chosen))}
+
+    sectors = {}
+    groups = {}
+    for p in positions:
+        sectors[p["sector"]] = sectors.get(p["sector"], 0) + p["market_value"]
+        if p["group"]:
+            groups.setdefault(p["group"], {"value": 0, "symbols": []})
+            groups[p["group"]]["value"] += p["market_value"]
+            groups[p["group"]]["symbols"].append(p["symbol"])
+
+    ranked = sorted((p for p in positions if p["unrealized_pl_pct"] is not None),
+                    key=lambda p: p["unrealized_pl_pct"])
+    funds = [p for p in positions if p["kind"] == "fund"]
     age_min = round((datetime.now(timezone.utc) - taken_at).total_seconds() / 60)
+
     return {
         "as_of": taken_at.isoformat(), "minutes_old": age_min,
-        "total_value": round(equity, 2), "cash": _f(cash),
-        "cash_weight_pct": round(float(cash) / equity * 100, 2) if equity else None,
+        "total_value": round(equity, 2), "cash": round(cash, 2),
+        "totals": {
+            "cash_weight_pct": pct(cash),
+            "invested_weight_pct": pct(equity - cash),
+            "number_of_positions": len(positions),
+            "largest_position": top(1),
+            "top_3_positions": top(3),
+            "top_5_positions": top(5),
+            "by_sector": [{"sector": k, "weight_pct": pct(v)}
+                          for k, v in sorted(sectors.items(), key=lambda kv: -kv[1])],
+            "by_group": [{"group": k, "symbols": v["symbols"], "weight_pct": pct(v["value"])}
+                         for k, v in groups.items()],
+            "index_funds_weight_pct": pct(sum(p["market_value"] for p in funds)),
+            "best_performers_since_purchase": [
+                {"symbol": p["symbol"], "unrealized_pl_pct": p["unrealized_pl_pct"]} for p in ranked[::-1][:2]],
+            "worst_performers_since_purchase": [
+                {"symbol": p["symbol"], "unrealized_pl_pct": p["unrealized_pl_pct"]} for p in ranked[:2]],
+        },
+        "notes": [
+            "Index funds (like VOO) hold hundreds of companies, including some of the same tech "
+            "stocks. Their sector mix is not broken down here, so don't count a whole fund as tech.",
+        ] + ([f"Unclassified holdings: {', '.join(p['symbol'] for p in positions if p['sector'] == 'Unclassified')}"]
+             if any(p["sector"] == "Unclassified" for p in positions) else []),
         "positions": positions,
     }
 
@@ -111,8 +166,9 @@ def get_news(conn, symbol=None, hours=24, limit=10):
 # What the model sees: names, descriptions, and parameter schemas
 DECLARATIONS = [
     {"name": "get_portfolio",
-     "description": "Current holdings: total value, cash, and every position with shares, price, "
-                    "profit/loss, and its percentage of the portfolio. Start here for most questions.",
+     "description": "Current holdings: total value, cash, every position (with sector, profit/loss, "
+                    "and portfolio weight), and pre-computed totals: top 3/top 5 weights, sector and "
+                    "group breakdowns, and best/worst performers. Start here for most questions.",
      "parameters_json_schema": {"type": "object", "properties": {}}},
     {"name": "get_portfolio_history",
      "description": "Total portfolio value at the end of each day, plus the change over the period.",
