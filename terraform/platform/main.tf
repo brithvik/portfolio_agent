@@ -20,7 +20,7 @@ terraform {
 variable "app_image" {
   description = "The app image. The only place the version is set."
   type        = string
-  default     = "portfolio-agent:v4"
+  default     = "portfolio-agent:v5"
 }
 
 # ---------- Connect to the cluster built by layer 1 ----------
@@ -115,6 +115,38 @@ resource "kubernetes_secret_v1" "gemini" {
   }
 }
 
+# ---------- The broker gateway's two tokens ----------
+# The agent token can only file proposals. The approver token can approve, reject, and use the
+# kill switch. They are separate secrets on purpose: agent pods are given the first and never
+# the second, so the agent cannot approve its own proposals.
+resource "random_password" "gateway_agent" {
+  length  = 40
+  special = false
+}
+
+resource "random_password" "gateway_approver" {
+  length  = 40
+  special = false
+}
+
+resource "kubernetes_secret_v1" "gateway_agent_token" {
+  metadata {
+    name = "gateway-agent-token"
+  }
+  data = {
+    token = random_password.gateway_agent.result
+  }
+}
+
+resource "kubernetes_secret_v1" "gateway_approver_token" {
+  metadata {
+    name = "gateway-approver-token"
+  }
+  data = {
+    token = random_password.gateway_approver.result
+  }
+}
+
 # ---------- The app: every YAML file in the k8s folder ----------
 data "kubectl_path_documents" "app" {
   pattern = "${path.module}/../../k8s/*.yaml"
@@ -133,6 +165,8 @@ resource "kubectl_manifest" "app" {
     kubernetes_secret_v1.postgres,
     kubernetes_secret_v1.alpaca,
     kubernetes_secret_v1.gemini,
+    kubernetes_secret_v1.gateway_agent_token,
+    kubernetes_secret_v1.gateway_approver_token,
   ]
 }
 
@@ -141,5 +175,7 @@ output "next_steps" {
     Platform is up. Check it with:   kubectl get pods
     Take a snapshot now with:        kubectl create job --from=cronjob/snapshot snapshot-test
     Get a briefing now with:         kubectl create job --from=cronjob/briefing briefing-now
+    Ask the agent a question:        .\scripts\ask.ps1 "How concentrated am I?"
+    Open the approval page:          .\scripts\gateway.ps1
   EOT
 }

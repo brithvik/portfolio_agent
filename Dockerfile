@@ -7,5 +7,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Run as a normal user, not root: a basic container security practice from day one
 RUN useradd --uid 1000 --create-home app
 COPY *.py ./
+COPY web ./web
 USER 1000
 CMD ["python", "collector.py", "snapshot"]

@@ -85,6 +85,53 @@ STATEMENTS = [
         at          TIMESTAMPTZ NOT NULL DEFAULT now()
     )""",
     "CREATE INDEX IF NOT EXISTS agent_steps_run_idx ON agent_steps (run_id, step)",
+
+    # ---------- The broker gateway ----------
+    # A trade the agent proposed. Nothing here is an order until a human approves it.
+    """CREATE TABLE IF NOT EXISTS trade_proposals (
+        id               BIGSERIAL PRIMARY KEY,
+        run_id           BIGINT REFERENCES agent_runs(id),  -- which agent run proposed it
+        symbol           TEXT NOT NULL,
+        side             TEXT NOT NULL,
+        notional         NUMERIC NOT NULL,
+        rationale        TEXT NOT NULL,
+        -- pending -> executing -> submitted -> partially_filled -> filled
+        -- or: rejected_by_policy, rejected (by the human), expired, canceled, failed
+        status           TEXT NOT NULL DEFAULT 'pending',
+        policy_checks    JSONB NOT NULL,
+        read_untrusted   BOOLEAN NOT NULL DEFAULT false,  -- the run read news before proposing
+        tools_used       JSONB NOT NULL DEFAULT '[]',
+        created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+        expires_at       TIMESTAMPTZ NOT NULL,
+        decided_at       TIMESTAMPTZ,
+        decided_by       TEXT,
+        decision_note    TEXT,
+        client_order_id  TEXT UNIQUE,   -- sent to the broker so a retry can never double-order
+        alpaca_order_id  TEXT,
+        order_status     TEXT,
+        filled_qty       NUMERIC,
+        filled_avg_price NUMERIC,
+        order_updated_at TIMESTAMPTZ,
+        error            TEXT
+    )""",
+    "CREATE INDEX IF NOT EXISTS trade_proposals_status_idx ON trade_proposals (status, created_at)",
+    # Everything the gateway does, in order. Rows are only ever added.
+    """CREATE TABLE IF NOT EXISTS gateway_events (
+        id          BIGSERIAL PRIMARY KEY,
+        proposal_id BIGINT REFERENCES trade_proposals(id),
+        event       TEXT NOT NULL,
+        actor       TEXT NOT NULL,       -- 'agent', 'approver', or 'gateway'
+        detail      JSONB,
+        at          TIMESTAMPTZ NOT NULL DEFAULT now()
+    )""",
+    """CREATE TABLE IF NOT EXISTS gateway_settings (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    )""",
+    "INSERT INTO gateway_settings (key, value) VALUES ('trading_enabled', 'true') ON CONFLICT DO NOTHING",
+    # A random id for this installation, used in order ids so they stay unique at the broker
+    # even if this database is ever rebuilt and proposal numbers start again from 1.
+    "INSERT INTO gateway_settings (key, value) VALUES ('install_id', substr(md5(random()::text), 1, 8)) ON CONFLICT DO NOTHING",
 ]
 
 

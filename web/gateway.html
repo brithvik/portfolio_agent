@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Broker gateway</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #ffffff; --text: #14171a; --muted: #667079; --border: #e1e4e8;
+    --buy: #0b7a4b; --buy-soft: #dff5ea; --sell: #b3402a; --sell-soft: #fbe7e1;
+    --warn: #8a5a00; --warn-soft: #fff3d6; --accent: #2456d6; --ok: #0b7a4b; --bad: #b3402a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1114; --card: #181b20; --text: #e9ecef; --muted: #98a1aa; --border: #2a2f36;
+      --buy: #4fd39a; --buy-soft: #12301f; --sell: #f08a72; --sell-soft: #3a1c15;
+      --warn: #f2c14e; --warn-soft: #3a2c0c; --accent: #7aa2ff; --ok: #4fd39a; --bad: #f08a72;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 28px 18px 70px; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 6px; }
+  h1 { margin: 0; font-size: 24px; }
+  h2 { font-size: 16px; margin: 30px 0 12px; }
+  .sub { color: var(--muted); margin: 0 0 22px; }
+  .pill { font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 999px;
+          border: 1px solid var(--border); white-space: nowrap; }
+  .pill.ok { color: var(--ok); border-color: var(--ok); }
+  .pill.bad { color: var(--bad); border-color: var(--bad); }
+  .pill.warn { color: var(--warn); border-color: var(--warn); }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 18px; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+  .stat b { display: block; font-size: 22px; }
+  .stat span { color: var(--muted); font-size: 13px; }
+  .proposal { margin-bottom: 14px; }
+  .trade { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; }
+  .side { font-weight: 800; font-size: 13px; padding: 3px 10px; border-radius: 8px; letter-spacing: .04em; }
+  .side.buy { background: var(--buy-soft); color: var(--buy); }
+  .side.sell { background: var(--sell-soft); color: var(--sell); }
+  .amount { font-size: 22px; font-weight: 700; }
+  .meta { color: var(--muted); font-size: 13px; }
+  blockquote { margin: 12px 0; padding: 10px 14px; border-left: 3px solid var(--border);
+               background: var(--bg); border-radius: 0 8px 8px 0; white-space: pre-wrap; }
+  .notice { background: var(--warn-soft); color: var(--warn); border-radius: 10px;
+            padding: 10px 14px; margin: 12px 0; font-size: 14px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+  .chip { font: 12px ui-monospace, Consolas, monospace; padding: 2px 8px; border-radius: 6px;
+          background: var(--bg); border: 1px solid var(--border); }
+  details { margin: 10px 0; }
+  summary { cursor: pointer; color: var(--muted); font-size: 14px; }
+  ul.checks { list-style: none; margin: 8px 0 0; padding: 0; font-size: 14px; }
+  ul.checks li { padding: 3px 0 3px 22px; position: relative; }
+  ul.checks li::before { position: absolute; left: 0; font-weight: 700; }
+  ul.checks li.pass::before { content: "\2713"; color: var(--ok); }
+  ul.checks li.fail::before { content: "\2717"; color: var(--bad); }
+  .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+  button { font: inherit; font-weight: 600; padding: 8px 16px; border-radius: 10px; cursor: pointer;
+           border: 1px solid var(--border); background: var(--card); color: var(--text); }
+  button.approve { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { color: var(--bad); border-color: var(--bad); }
+  button:disabled { opacity: .5; cursor: default; }
+  input { font: inherit; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border);
+          background: var(--card); color: var(--text); min-width: 260px; }
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  .empty { color: var(--muted); }
+  #flash { position: sticky; top: 10px; z-index: 5; display: none; margin-bottom: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Broker gateway</h1>
+    <span class="pill" id="mode"></span>
+    <span class="pill" id="market"></span>
+    <span class="pill" id="trading"></span>
+  </header>
+  <p class="sub">The agent can only propose. The rules decide what is allowed. You decide what happens.</p>
+
+  <div class="card notice" id="flash"></div>
+
+  <section class="card" id="login" hidden>
+    <strong>Enter the approver token</strong>
+    <p class="meta">Only the approver token can approve or reject. The agent never has it.
+      Copy it with <code>.\scripts\approver-token.ps1</code>. It is kept for this browser tab only.</p>
+    <div class="actions">
+      <input type="password" id="token" placeholder="Approver token" autocomplete="off">
+      <button class="approve" id="saveToken">Unlock</button>
+    </div>
+  </section>
+
+  <div id="app" hidden>
+    <section class="stats">
+      <div class="card stat"><b id="cash">-</b><span>cash (no margin is ever used)</span></div>
+      <div class="card stat"><b id="equity">-</b><span>portfolio value</span></div>
+      <div class="card stat"><b id="trades">-</b><span>trades today</span></div>
+      <div class="card stat"><b id="dollars">-</b><span>traded today</span></div>
+    </section>
+
+    <details class="card" style="margin-top: 14px">
+      <summary>Trading rules enforced in code</summary>
+      <ul class="checks" id="limits"></ul>
+    </details>
+
+    <div class="actions">
+      <button id="kill"></button>
+      <button id="lock">Lock this tab</button>
+    </div>
+
+    <h2>Waiting for your decision</h2>
+    <div id="pending"></div>
+
+    <h2>History</h2>
+    <div class="card scroll">
+      <table>
+        <thead><tr><th>#</th><th>When</th><th>Trade</th><th>Status</th><th>Detail</th></tr></thead>
+        <tbody id="history"></tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const money = n => "$" + Number(n).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+const when = t => new Date(t).toLocaleString([], {month: "short", day: "numeric", hour: "numeric", minute: "2-digit"});
+let token = sessionStorage.getItem("approverToken") || "";
+let tradingEnabled = true;
+
+function flash(text) {
+  const box = $("flash");
+  box.textContent = text;
+  box.style.display = "block";
+  clearTimeout(flash.timer);
+  flash.timer = setTimeout(() => { box.style.display = "none"; }, 7000);
+}
+
+async function api(path, options = {}) {
+  const r = await fetch(path, {...options, headers: {"Authorization": "Bearer " + token, "Content-Type": "application/json"}});
+  if (r.status === 401 || r.status === 403) { lock("That token was not accepted."); throw new Error("locked"); }
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.detail || ("Request failed (" + r.status + ")"));
+  return body;
+}
+
+function lock(message) {
+  token = "";
+  sessionStorage.removeItem("approverToken");
+  $("app").hidden = true;
+  $("login").hidden = false;
+  if (message) flash(message);
+}
+
+$("saveToken").onclick = () => {
+  token = $("token").value.trim();
+  $("token").value = "";
+  if (!token) return;
+  sessionStorage.setItem("approverToken", token);
+  refresh();
+};
+$("lock").onclick = () => lock();
+
+$("kill").onclick = async () => {
+  const turningOff = tradingEnabled;
+  if (!confirm(turningOff ? "Stop ALL trading? Proposals and approvals will be refused until you turn it back on."
+                          : "Turn trading back on?")) return;
+  try { await api("/api/kill-switch", {method: "POST", body: JSON.stringify({trading_enabled: !turningOff})}); }
+  catch (e) { if (e.message !== "locked") flash(e.message); }
+  refresh();
+};
+
+const LIMIT_TEXT = {
+  max_trade_dollars: v => `No single trade over ${money(v)}`,
+  min_trade_dollars: v => `No trade under ${money(v)}`,
+  max_daily_dollars: v => `No more than ${money(v)} traded per day`,
+  max_trades_per_day: v => `No more than ${v} trades per day`,
+  max_position_pct: v => `No holding above ${v}% of the portfolio`,
+  min_cash_pct: v => `Buys must leave at least ${v}% in cash`,
+  max_pending: v => `No more than ${v} proposals waiting at once`,
+  proposal_ttl_minutes: v => `Proposals expire after ${v} minutes`,
+  min_rationale_chars: v => `Every proposal needs a written reason`,
+};
+
+function checksHtml(checks) {
+  return '<ul class="checks">' + (checks || []).map(c =>
+    `<li class="${c.passed ? "pass" : "fail"}">${esc(c.detail)}</li>`).join("") + "</ul>";
+}
+
+function toolChips(tools) {
+  if (!tools || !tools.length) return "";
+  return '<div class="chips">' + tools.map(t => {
+    const args = Object.entries(t.args || {}).filter(([k]) => k !== "run_id" && k !== "rationale")
+      .map(([k, v]) => `${k}=${v}`).join(", ");
+    return `<span class="chip">${esc(t.tool)}(${esc(args)})</span>`;
+  }).join("") + "</div>";
+}
+
+function pendingCard(p) {
+  const minutes = Math.max(0, Math.round((new Date(p.expires_at) - Date.now()) / 60000));
+  return `<div class="card proposal">
+    <div class="trade">
+      <span class="side ${esc(p.side)}">${esc(p.side.toUpperCase())}</span>
+      <span class="amount">${money(p.notional)} of ${esc(p.symbol)}</span>
+      <span class="meta">proposal #${p.id} · ${when(p.created_at)} · expires in ${minutes} min</span>
+    </div>
+    ${p.question ? `<p class="meta">You asked: “${esc(p.question)}”</p>` : ""}
+    <blockquote>${esc(p.rationale)}</blockquote>
+    ${p.read_untrusted ? `<div class="notice"><strong>The agent read news before proposing this.</strong>
+      News is outside text, and someone could write it to steer an AI. Make sure the reason above
+      rests on your portfolio, not on a headline.</div>` : ""}
+    <div class="meta">What the agent looked at in this conversation:</div>
+    ${toolChips(p.tools_used) || '<div class="meta">(no tool calls recorded)</div>'}
+    <details><summary>All ${p.policy_checks.length} rules passed when it was proposed. They are checked again when you approve.</summary>
+      ${checksHtml(p.policy_checks)}</details>
+    <div class="actions">
+      <button class="approve" data-approve="${p.id}" data-label="${esc(p.side.toUpperCase())} ${money(p.notional)} of ${esc(p.symbol)}">Approve and send order</button>
+      <button class="danger" data-reject="${p.id}">Reject</button>
+    </div>
+  </div>`;
+}
+
+const STATUS = {
+  filled: ["ok", "filled"], partially_filled: ["warn", "partly filled"], submitted: ["warn", "order sent"],
+  executing: ["warn", "sending"], rejected: ["", "you rejected it"], rejected_by_policy: ["bad", "blocked by rules"],
+  expired: ["", "expired"], canceled: ["", "canceled"], failed: ["bad", "failed"],
+};
+
+function historyRow(p) {
+  const [cls, label] = STATUS[p.status] || ["", p.status];
+  let detail = "";
+  if (p.filled_qty) detail = `${p.filled_qty} shares at ${money(p.filled_avg_price)}`;
+  else if (p.status === "rejected_by_policy")
+    detail = (p.policy_checks || []).filter(c => !c.passed).map(c => c.detail).join(" ");
+  else if (p.error) detail = p.error;
+  else if (p.decision_note) detail = "Note: " + p.decision_note;
+  return `<tr><td>${p.id}</td><td>${when(p.created_at)}</td>
+    <td><span class="side ${esc(p.side)}">${esc(p.side.toUpperCase())}</span> ${money(p.notional)} ${esc(p.symbol)}</td>
+    <td><span class="pill ${cls}">${esc(label)}</span></td><td>${esc(detail)}</td></tr>`;
+}
+
+document.addEventListener("click", async e => {
+  const approve = e.target.dataset.approve, reject = e.target.dataset.reject;
+  if (!approve && !reject) return;
+  try {
+    if (approve) {
+      if (!confirm(`Send this order to the broker?\n\n${e.target.dataset.label}`)) return;
+      e.target.disabled = true;
+      const r = await api(`/api/proposals/${approve}/approve`, {method: "POST"});
+      flash(r.message + (r.failed_rules ? " " + r.failed_rules.map(f => f.detail).join(" ") : ""));
+    } else {
+      const note = prompt("Reason for rejecting (optional):", "");
+      if (note === null) return;
+      await api(`/api/proposals/${reject}/reject`, {method: "POST", body: JSON.stringify({note})});
+      flash("Proposal rejected. No order was sent.");
+    }
+  } catch (err) { if (err.message !== "locked") flash(err.message); }
+  refresh();
+});
+
+async function refresh() {
+  if (!token) { lock(); return; }
+  try {
+    const [o, list] = await Promise.all([api("/api/overview"), api("/api/proposals")]);
+    $("login").hidden = true; $("app").hidden = false;
+    tradingEnabled = o.trading_enabled;
+    $("mode").textContent = o.paper ? "PAPER · simulated money" : "LIVE · real money";
+    $("mode").className = "pill " + (o.paper ? "ok" : "bad");
+    $("market").textContent = o.market_open === undefined ? "broker unreachable" : o.market_open ? "market open" : "market closed";
+    $("market").className = "pill " + (o.market_open ? "ok" : "warn");
+    $("trading").textContent = o.trading_enabled ? "trading enabled" : "KILL SWITCH ON";
+    $("trading").className = "pill " + (o.trading_enabled ? "ok" : "bad");
+    $("kill").textContent = o.trading_enabled ? "Stop all trading (kill switch)" : "Turn trading back on";
+    $("kill").className = o.trading_enabled ? "danger" : "approve";
+    $("cash").textContent = o.cash === undefined ? "-" : money(o.cash);
+    $("equity").textContent = o.equity === undefined ? "-" : money(o.equity);
+    $("trades").textContent = `${o.today.trades} of ${o.limits.max_trades_per_day}`;
+    $("dollars").textContent = `${money(o.today.dollars)} of ${money(o.limits.max_daily_dollars)}`;
+    $("limits").innerHTML = Object.entries(o.limits).map(([k, v]) =>
+      `<li class="pass">${esc((LIMIT_TEXT[k] || (x => k + ": " + x))(v))}</li>`).join("");
+
+    const pending = list.filter(p => p.status === "pending");
+    $("pending").innerHTML = pending.length ? pending.map(pendingCard).join("")
+      : '<div class="card empty">Nothing is waiting. Ask the agent to propose a trade.</div>';
+    const done = list.filter(p => p.status !== "pending");
+    $("history").innerHTML = done.length ? done.map(historyRow).join("")
+      : '<tr><td colspan="5" class="empty">No decisions yet.</td></tr>';
+  } catch (err) { if (err.message !== "locked") flash(err.message); }
+}
+
+refresh();
+setInterval(() => { if (token && !document.querySelector("details[open] ul.checks")) refresh(); }, 5000);
+</script>
+</body>
+</html>

@@ -22,6 +22,7 @@ spec:
       template:
         spec:
           restartPolicy: Never
+          automountServiceAccountToken: false   # no access to the Kubernetes API
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
