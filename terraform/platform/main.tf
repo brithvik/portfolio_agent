@@ -20,7 +20,7 @@ terraform {
 variable "app_image" {
   description = "The app image. The only place the version is set."
   type        = string
-  default     = "portfolio-agent:v5"
+  default     = "portfolio-agent:v6"
 }
 
 # ---------- Connect to the cluster built by layer 1 ----------
@@ -177,5 +177,7 @@ output "next_steps" {
     Get a briefing now with:         kubectl create job --from=cronjob/briefing briefing-now
     Ask the agent a question:        .\scripts\ask.ps1 "How concentrated am I?"
     Open the approval page:          .\scripts\gateway.ps1
+    Prove the network rules:         .\scripts\netcheck.ps1
+    Run the red-team suite:          .\scripts\redteam.ps1
   EOT
 }

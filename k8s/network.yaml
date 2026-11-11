@@ -1,0 +1,146 @@
+# Network rules: who may talk to whom. Start from "nobody can talk to anybody", then open
+# only the connections each part needs.
+#
+#   collectors ──► Postgres            collectors ──► Alpaca (read-only data)
+#   agent ──────► Postgres             gateway ─────► Alpaca (the only place orders come from)
+#   agent ──────► gateway              agent ──────► egress proxy ──► Gemini API only
+#
+# The agent has NO direct path to the internet. It can't reach Alpaca even by IP address.
+#
+# These only work if the cluster's network plugin enforces NetworkPolicies. Don't assume it
+# does: run .\scripts\netcheck.ps1, which tries the connections for real.
+
+# 1. Default deny: every pod in this namespace starts with no connections in or out.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+---
+# 2. Everyone may look up names (DNS). Without this, nothing can even find the database.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+spec:
+  podSelector: {}
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+          podSelector:
+            matchLabels: { k8s-app: kube-dns }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+---
+# 3. Postgres accepts connections only from the three parts that use it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-ingress
+spec:
+  podSelector:
+    matchLabels: { app: postgres }
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - { key: app, operator: In, values: ["collector", "agent", "gateway"] }
+      ports:
+        - { protocol: TCP, port: 5432 }
+---
+# 4. The gateway accepts connections only from agent pods. (Your browser reaches it through
+#    kubectl port-forward, which arrives from the node itself and is always allowed.)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gateway-ingress
+spec:
+  podSelector:
+    matchLabels: { app: gateway }
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app: agent }
+      ports:
+        - { protocol: TCP, port: 8080 }
+---
+# 5. The gateway and the collectors may reach Postgres and the internet over HTTPS (for
+#    Alpaca). Private address ranges are excluded, so "the internet" can't mean other pods.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: broker-clients-egress
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: app, operator: In, values: ["collector", "gateway"] }
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: { app: postgres }
+      ports:
+        - { protocol: TCP, port: 5432 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"]
+      ports:
+        - { protocol: TCP, port: 443 }
+---
+# 6. The agent: Postgres, the gateway, and the egress proxy. Nothing else. No internet.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agent-egress
+spec:
+  podSelector:
+    matchLabels: { app: agent }
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: { app: postgres }
+      ports:
+        - { protocol: TCP, port: 5432 }
+    - to:
+        - podSelector:
+            matchLabels: { app: gateway }
+      ports:
+        - { protocol: TCP, port: 8080 }
+    - to:
+        - podSelector:
+            matchLabels: { app: egress-proxy }
+      ports:
+        - { protocol: TCP, port: 3128 }
+---
+# 7. The egress proxy: accepts only agent pods, and may reach the internet over HTTPS. Which
+#    websites it will actually tunnel to is decided by its own allowlist (Gemini only).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: egress-proxy
+spec:
+  podSelector:
+    matchLabels: { app: egress-proxy }
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app: agent }
+      ports:
+        - { protocol: TCP, port: 3128 }
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"]
+      ports:
+        - { protocol: TCP, port: 443 }

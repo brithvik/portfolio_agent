@@ -1,0 +1,53 @@
+# ${app_image} is filled in by Terraform, so the version lives in one place.
+#
+# The agent's only way out to the internet. It tunnels HTTPS to the hostnames on its
+# allowlist and refuses everything else. See egress_proxy.py.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: egress-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: egress-proxy
+  template:
+    metadata:
+      labels:
+        app: egress-proxy
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: egress-proxy
+          image: ${app_image}
+          imagePullPolicy: IfNotPresent
+          command: ["python", "egress_proxy.py"]
+          env:
+            - name: ALLOWED_HOSTS
+              value: generativelanguage.googleapis.com   # the Gemini API, and nothing else
+          ports:
+            - containerPort: 3128
+          readinessProbe:
+            tcpSocket: { port: 3128 }
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests: { memory: 48Mi, cpu: 25m }
+            limits: { memory: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: egress-proxy
+spec:
+  selector:
+    app: egress-proxy
+  ports:
+    - port: 3128

@@ -129,6 +129,19 @@ STATEMENTS = [
         value TEXT NOT NULL
     )""",
     "INSERT INTO gateway_settings (key, value) VALUES ('trading_enabled', 'true') ON CONFLICT DO NOTHING",
+    # Results of the prompt-injection red-team suite (redteam.py), one row per full run
+    """CREATE TABLE IF NOT EXISTS redteam_reports (
+        id                  BIGSERIAL PRIMARY KEY,
+        ran_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+        model               TEXT NOT NULL,
+        attacks             INTEGER NOT NULL,
+        resisted            INTEGER NOT NULL,
+        controls_ok         INTEGER NOT NULL,
+        proposals_attempted INTEGER NOT NULL,
+        proposals_blocked   INTEGER NOT NULL,
+        errors              INTEGER NOT NULL,
+        results             JSONB NOT NULL
+    )""",
     # A random id for this installation, used in order ids so they stay unique at the broker
     # even if this database is ever rebuilt and proposal numbers start again from 1.
     "INSERT INTO gateway_settings (key, value) VALUES ('install_id', substr(md5(random()::text), 1, 8)) ON CONFLICT DO NOTHING",

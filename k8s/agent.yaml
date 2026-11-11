@@ -20,6 +20,9 @@ spec:
       backoffLimit: 1
       activeDeadlineSeconds: 600   # a hard stop: no run lasts more than 10 minutes
       template:
+        metadata:
+          labels:
+            app: agent
         spec:
           restartPolicy: Never
           automountServiceAccountToken: false   # no access to the Kubernetes API
@@ -40,6 +43,11 @@ spec:
                     secretKeyRef:
                       name: postgres-credentials
                       key: DATABASE_URL
+                # The agent has no direct internet access: HTTPS goes through the allowlisting proxy
+                - name: HTTPS_PROXY
+                  value: http://egress-proxy:3128
+                - name: NO_PROXY
+                  value: postgres,gateway,localhost,127.0.0.1,.svc,.cluster.local
               securityContext:
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true

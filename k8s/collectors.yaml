@@ -16,6 +16,9 @@ spec:
     spec:
       backoffLimit: 2
       template:
+        metadata:
+          labels:
+            app: collector
         spec:
           restartPolicy: Never
           automountServiceAccountToken: false   # no access to the Kubernetes API
@@ -61,6 +64,9 @@ spec:
     spec:
       backoffLimit: 2
       template:
+        metadata:
+          labels:
+            app: collector
         spec:
           restartPolicy: Never
           automountServiceAccountToken: false   # no access to the Kubernetes API
