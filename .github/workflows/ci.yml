@@ -1,0 +1,129 @@
+# Continuous integration: every push and pull request is checked automatically.
+#
+#   1. Python      lint, then all tests, including the gateway tests against a real PostgreSQL
+#   2. Terraform   formatting and validation of both layers
+#   3. Kubernetes  every manifest validated against the official Kubernetes schemas
+#   4. Image       the Docker image builds, then gets scanned for known vulnerabilities
+#
+# What CI deliberately does NOT run: the red-team and evaluation suites. They call the real
+# Gemini API and need a key, so they run on the cluster with .\scripts\redteam.ps1 and
+# .\scripts\evaluate.ps1. No secrets are stored in GitHub at all.
+#
+# Supply-chain care: every third-party action is pinned to an exact commit (a tag can be moved
+# to point at different code; a commit can't), and downloaded tools are checked by checksum.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read          # the workflow can read the code and nothing else
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true   # a newer push makes an older run pointless
+
+jobs:
+  python:
+    name: Python lint and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:            # a throwaway database just for the gateway tests
+        image: postgres:17
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: portfolio_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ci" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0   # v7.1.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install -r requirements.txt
+          python -m pip install ruff==0.17.3
+      - name: Lint (syntax errors, undefined names, unused imports)
+        run: ruff check --select E9,F --target-version py312 .
+      - name: Run all tests
+        env:
+          TEST_DATABASE_URL: postgresql://ci:ci@localhost:5432/portfolio_test
+        run: python -m pytest tests -v
+
+  terraform:
+    name: Terraform format and validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e   # v4.0.1
+      - name: Check formatting
+        run: terraform fmt -check -recursive -diff terraform
+      - name: Validate the cluster layer
+        working-directory: terraform/cluster
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
+      - name: Validate the platform layer
+        working-directory: terraform/platform
+        run: |
+          # The platform layer reads .env, which is never committed. Validation only needs the
+          # file to exist, so CI creates one with placeholder values.
+          printf 'ALPACA_API_KEY=ci\nALPACA_SECRET_KEY=ci\nGEMINI_API_KEY=ci\nGEMINI_MODEL=ci\n' > ../../.env
+          terraform init -backend=false -input=false
+          terraform validate
+
+  kubernetes:
+    name: Kubernetes manifests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+      - name: Install kubeconform v0.8.0 (checksum verified)
+        run: |
+          curl -sSL -o kubeconform.tgz \
+            https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz
+          echo "9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883  kubeconform.tgz" | sha256sum -c -
+          tar xzf kubeconform.tgz kubeconform
+      - name: Validate every manifest against the Kubernetes schemas
+        run: |
+          # Terraform fills in ${app_image}; give it a placeholder so the files are plain YAML
+          mkdir rendered
+          for f in k8s/*.yaml; do sed 's/\${app_image}/portfolio-agent:ci/g' "$f" > "rendered/$(basename "$f")"; done
+          ./kubeconform -strict -summary rendered/*.yaml
+
+  image:
+    name: Build and scan the image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+      - name: Build
+        run: docker build -t portfolio-agent:ci .
+      - name: Confirm the image runs as a normal user, not root
+        run: |
+          user=$(docker inspect --format '{{.Config.User}}' portfolio-agent:ci)
+          echo "Image user: $user"
+          test "$user" = "1000"
+      - name: Vulnerability report (all fixable HIGH and CRITICAL findings, for the record)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25   # v0.36.0
+        with:
+          image-ref: portfolio-agent:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "0"
+      - name: Fail the build on any fixable CRITICAL vulnerability
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25   # v0.36.0
+        with:
+          image-ref: portfolio-agent:ci
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          skip-setup-trivy: true   # reuse the copy installed by the step above
