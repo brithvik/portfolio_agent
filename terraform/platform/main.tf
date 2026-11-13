@@ -20,7 +20,7 @@ terraform {
 variable "app_image" {
   description = "The app image. The only place the version is set."
   type        = string
-  default     = "portfolio-agent:v6"
+  default     = "portfolio-agent:v8"
 }
 
 # ---------- Connect to the cluster built by layer 1 ----------
@@ -179,5 +179,6 @@ output "next_steps" {
     Open the approval page:          .\scripts\gateway.ps1
     Prove the network rules:         .\scripts\netcheck.ps1
     Run the red-team suite:          .\scripts\redteam.ps1
+    Score the agent's accuracy:      .\scripts\evaluate.ps1
   EOT
 }

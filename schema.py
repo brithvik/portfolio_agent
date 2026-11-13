@@ -142,6 +142,21 @@ STATEMENTS = [
         errors              INTEGER NOT NULL,
         results             JSONB NOT NULL
     )""",
+    # Results of the accuracy evaluation (evaluate.py), one row per full run
+    """CREATE TABLE IF NOT EXISTS eval_reports (
+        id               BIGSERIAL PRIMARY KEY,
+        ran_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+        model            TEXT NOT NULL,
+        questions        INTEGER NOT NULL,
+        passed           INTEGER NOT NULL,
+        facts_total      INTEGER NOT NULL,
+        facts_correct    INTEGER NOT NULL,
+        numbers_cited    INTEGER NOT NULL,
+        numbers_grounded INTEGER NOT NULL,
+        avg_seconds      NUMERIC,
+        total_tokens     INTEGER,
+        results          JSONB NOT NULL
+    )""",
     # A random id for this installation, used in order ids so they stay unique at the broker
     # even if this database is ever rebuilt and proposal numbers start again from 1.
     "INSERT INTO gateway_settings (key, value) VALUES ('install_id', substr(md5(random()::text), 1, 8)) ON CONFLICT DO NOTHING",
