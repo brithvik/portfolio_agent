@@ -1,0 +1,304 @@
+# ${app_image} is filled in by Terraform, so the version lives in one place.
+#
+# Monitoring, sized for an 8 GB laptop (about 400 MB in use, hard limits on everything):
+#
+#   metrics-exporter ──reads──► PostgreSQL        (read-only; see metrics_exporter.py)
+#   Prometheus ──scrapes every 30s──► metrics-exporter, and evaluates the alert rules below
+#   Grafana ──queries──► Prometheus               (dashboard: monitoring/dashboards/)
+#
+# Grafana's admin password and the dashboard are created by Terraform. Open Grafana with
+# .\scripts\grafana.ps1, which copies the password to your clipboard.
+
+# ---------- the exporter ----------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: metrics-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: metrics-exporter }
+  template:
+    metadata:
+      labels: { app: metrics-exporter }
+    spec:
+      automountServiceAccountToken: false
+      securityContext: { runAsNonRoot: true, runAsUser: 1000 }
+      containers:
+        - name: metrics-exporter
+          image: ${app_image}
+          imagePullPolicy: IfNotPresent
+          command: ["python", "metrics_exporter.py"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: postgres-credentials, key: DATABASE_URL }
+          ports:
+            - containerPort: 9100
+          readinessProbe:
+            tcpSocket: { port: 9100 }
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { memory: 48Mi, cpu: 25m }
+            limits: { memory: 192Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: metrics-exporter
+spec:
+  selector: { app: metrics-exporter }
+  ports:
+    - port: 9100
+---
+# ---------- Prometheus ----------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 30s
+      evaluation_interval: 30s
+    rule_files:
+      - /etc/prometheus/rules.yml
+    scrape_configs:
+      - job_name: portfolio-metrics
+        static_configs:
+          - targets: ["metrics-exporter:9100"]
+      - job_name: prometheus
+        static_configs:
+          - targets: ["localhost:9090"]
+  rules.yml: |
+    # Alerts. Grafana shows the firing ones on the dashboard's first panel.
+    groups:
+      - name: portfolio-agent
+        rules:
+          - alert: MetricsUnavailable
+            expr: up{job="portfolio-metrics"} == 0 or portfolio_exporter_database_up == 0
+            for: 2m
+            labels: { severity: critical }
+            annotations:
+              summary: The metrics exporter or the database is down, so nothing is being measured.
+          - alert: SnapshotsStale
+            expr: market_hours == 1 and portfolio_snapshot_age_seconds > 900
+            for: 10m
+            labels: { severity: critical }
+            annotations:
+              summary: The market is open but no portfolio snapshot in over 15 minutes. Check the snapshot CronJob.
+          - alert: AgentRunsFailing
+            expr: sum(increase(agent_runs_total{status="failed"}[1h])) > 2
+            labels: { severity: warning }
+            annotations:
+              summary: More than 2 agent runs failed in the last hour. Check agent_runs.error.
+          - alert: ModelErrors
+            expr: sum(increase(agent_model_calls_total{outcome="error"}[1h])) > 5
+            labels: { severity: warning }
+            annotations:
+              summary: The LLM API returned more than 5 errors in the last hour (rate limits or outages).
+          - alert: UngroundedAnswer
+            expr: agent_answers_ungrounded{window="24h"} > 0
+            labels: { severity: warning }
+            annotations:
+              summary: A real answer in the last 24 hours stated a number that isn't in the data. Re-check it with .\scripts\evaluate.ps1 -Run <id>.
+          - alert: EvaluationBelowTarget
+            expr: eval_questions_passed_ratio < 0.9 or eval_numbers_grounded_ratio < 0.95
+            labels: { severity: warning }
+            annotations:
+              summary: The latest evaluation run fell below target (90% of questions, 95% of numbers grounded).
+          - alert: EvaluationOverdue
+            expr: time() - eval_last_run_timestamp_seconds > 7 * 86400
+            labels: { severity: info }
+            annotations:
+              summary: The evaluation suite hasn't run in over a week. Run .\scripts\evaluate.ps1.
+          - alert: RedTeamRegression
+            expr: redteam_attacks_resisted < redteam_attacks
+            labels: { severity: warning }
+            annotations:
+              summary: The agent fell for at least one attack in the latest red-team run.
+          - alert: KillSwitchOn
+            expr: gateway_trading_enabled == 0
+            labels: { severity: info }
+            annotations:
+              summary: The kill switch is on. All trading is stopped until it's turned off.
+          - alert: ProposalWaiting
+            expr: trade_proposals_waiting > 0
+            for: 30m
+            labels: { severity: info }
+            annotations:
+              summary: A trade proposal has been waiting for a decision for over 30 minutes.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-data
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+spec:
+  replicas: 1
+  strategy: { type: Recreate }   # the data volume can only be attached to one pod at a time
+  selector:
+    matchLabels: { app: prometheus }
+  template:
+    metadata:
+      labels: { app: prometheus }
+      annotations:
+        config-version: "1"   # bump to restart Prometheus after editing the rules above
+    spec:
+      automountServiceAccountToken: false
+      securityContext: { runAsNonRoot: true, runAsUser: 65534, fsGroup: 65534 }
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v3.15.1
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time=15d
+            - --storage.tsdb.retention.size=1GB   # well under the 2Gi volume
+          ports:
+            - containerPort: 9090
+          readinessProbe:
+            httpGet: { path: /-/ready, port: 9090 }
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { memory: 128Mi, cpu: 50m }
+            limits: { memory: 512Mi }
+          volumeMounts:
+            - { name: config, mountPath: /etc/prometheus }
+            - { name: data, mountPath: /prometheus }
+      volumes:
+        - name: config
+          configMap: { name: prometheus-config }
+        - name: data
+          persistentVolumeClaim: { claimName: prometheus-data }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+spec:
+  selector: { app: prometheus }
+  ports:
+    - port: 9090
+---
+# ---------- Grafana ----------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-provisioning
+data:
+  datasources.yml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        uid: prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus:9090
+        isDefault: true
+        editable: false
+  dashboards.yml: |
+    apiVersion: 1
+    providers:
+      - name: portfolio-agent
+        type: file
+        disableDeletion: true
+        allowUiUpdates: false        # the dashboard lives in Git; edit the JSON, not the UI
+        options:
+          path: /etc/grafana/dashboards
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: grafana }
+  template:
+    metadata:
+      labels: { app: grafana }
+    spec:
+      automountServiceAccountToken: false
+      securityContext: { runAsNonRoot: true, runAsUser: 472, fsGroup: 472 }
+      containers:
+        - name: grafana
+          image: grafana/grafana:13.2.6
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              valueFrom:
+                secretKeyRef: { name: grafana-admin, key: user }
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: grafana-admin, key: password }
+            # Locked down: no anonymous access or sign-ups, and no calls home (the network
+            # rules would block them anyway)
+            - { name: GF_AUTH_ANONYMOUS_ENABLED, value: "false" }
+            - { name: GF_USERS_ALLOW_SIGN_UP, value: "false" }
+            - { name: GF_ANALYTICS_REPORTING_ENABLED, value: "false" }
+            - { name: GF_ANALYTICS_CHECK_FOR_UPDATES, value: "false" }
+            - { name: GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES, value: "false" }
+            - { name: GF_PLUGINS_PREINSTALL_DISABLED, value: "true" }
+            - { name: GF_NEWS_NEWS_FEED_ENABLED, value: "false" }
+            # Slimmed down for a small machine: Prometheus evaluates the alert rules, so Grafana's
+            # own alerting engine is off, and its SQLite database uses write-ahead logging.
+            - { name: GF_UNIFIED_ALERTING_ENABLED, value: "false" }
+            - { name: GF_DATABASE_WAL, value: "true" }
+            - { name: GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH, value: /etc/grafana/dashboards/portfolio-agent.json }
+          ports:
+            - containerPort: 3000
+          readinessProbe:
+            httpGet: { path: /api/health, port: 3000 }
+            periodSeconds: 10
+            timeoutSeconds: 5     # the default of 1 second is too strict on a busy laptop
+            failureThreshold: 6
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          resources:
+            # 384Mi turned out to be too tight for Grafana 13: it didn't crash, but it spent two
+            # days starved (database locks, timeouts) and never passed its health check.
+            requests: { memory: 256Mi, cpu: 100m }
+            limits: { memory: 768Mi }
+          volumeMounts:
+            - { name: provisioning, mountPath: /etc/grafana/provisioning/datasources/datasources.yml, subPath: datasources.yml }
+            - { name: provisioning, mountPath: /etc/grafana/provisioning/dashboards/dashboards.yml, subPath: dashboards.yml }
+            - { name: dashboards, mountPath: /etc/grafana/dashboards }
+            - { name: state, mountPath: /var/lib/grafana }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: provisioning
+          configMap: { name: grafana-provisioning }
+        - name: dashboards
+          configMap: { name: grafana-dashboards }   # created by Terraform from monitoring/dashboards/
+        - name: state                                # nothing to keep: everything is provisioned
+          emptyDir: { medium: Memory, sizeLimit: 128Mi }   # in memory, so slow disk can't lock the database
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+spec:
+  selector: { app: grafana }
+  ports:
+    - port: 3000

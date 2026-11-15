@@ -50,7 +50,7 @@ spec:
     - from:
         - podSelector:
             matchExpressions:
-              - { key: app, operator: In, values: ["collector", "agent", "gateway"] }
+              - { key: app, operator: In, values: ["collector", "agent", "gateway", "metrics-exporter"] }
       ports:
         - { protocol: TCP, port: 5432 }
 ---
@@ -144,3 +144,62 @@ spec:
             except: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"]
       ports:
         - { protocol: TCP, port: 443 }
+---
+# 8. Monitoring. None of it can reach the internet.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: metrics-exporter
+spec:
+  podSelector:
+    matchLabels: { app: metrics-exporter }
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app: prometheus }
+      ports:
+        - { protocol: TCP, port: 9100 }
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: { app: postgres }
+      ports:
+        - { protocol: TCP, port: 5432 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: prometheus
+spec:
+  podSelector:
+    matchLabels: { app: prometheus }
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app: grafana }
+      ports:
+        - { protocol: TCP, port: 9090 }
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: { app: metrics-exporter }
+      ports:
+        - { protocol: TCP, port: 9100 }
+---
+# Your browser reaches Grafana through kubectl port-forward, which these rules don't affect.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: grafana
+spec:
+  podSelector:
+    matchLabels: { app: grafana }
+  policyTypes: ["Ingress", "Egress"]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: { app: prometheus }
+      ports:
+        - { protocol: TCP, port: 9090 }

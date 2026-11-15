@@ -20,7 +20,7 @@ terraform {
 variable "app_image" {
   description = "The app image. The only place the version is set."
   type        = string
-  default     = "portfolio-agent:v8"
+  default     = "portfolio-agent:v9"
 }
 
 # ---------- Connect to the cluster built by layer 1 ----------
@@ -147,6 +147,35 @@ resource "kubernetes_secret_v1" "gateway_approver_token" {
   }
 }
 
+# ---------- Monitoring ----------
+# Grafana's admin login, generated here like every other password in the project
+resource "random_password" "grafana_admin" {
+  length  = 24
+  special = false
+}
+
+resource "kubernetes_secret_v1" "grafana_admin" {
+  metadata {
+    name = "grafana-admin"
+  }
+  data = {
+    user     = "admin"
+    password = random_password.grafana_admin.result
+  }
+}
+
+# Dashboards as code: the JSON in monitoring/dashboards (built by monitoring/build_dashboard.py)
+# is deployed from Git. Changing the file and running up.ps1 updates the dashboard.
+resource "kubernetes_config_map_v1" "grafana_dashboards" {
+  metadata {
+    name = "grafana-dashboards"
+  }
+  data = {
+    for f in fileset("${path.module}/../../monitoring/dashboards", "*.json") :
+    f => file("${path.module}/../../monitoring/dashboards/${f}")
+  }
+}
+
 # ---------- The app: every YAML file in the k8s folder ----------
 data "kubectl_path_documents" "app" {
   pattern = "${path.module}/../../k8s/*.yaml"
@@ -167,6 +196,8 @@ resource "kubectl_manifest" "app" {
     kubernetes_secret_v1.gemini,
     kubernetes_secret_v1.gateway_agent_token,
     kubernetes_secret_v1.gateway_approver_token,
+    kubernetes_secret_v1.grafana_admin,
+    kubernetes_config_map_v1.grafana_dashboards,
   ]
 }
 
@@ -180,5 +211,6 @@ output "next_steps" {
     Prove the network rules:         .\scripts\netcheck.ps1
     Run the red-team suite:          .\scripts\redteam.ps1
     Score the agent's accuracy:      .\scripts\evaluate.ps1
+    Open the monitoring dashboard:   .\scripts\grafana.ps1
   EOT
 }
