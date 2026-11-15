@@ -51,6 +51,10 @@ CHECKS = [
     ("Alpaca data API     directly",                   lambda: tcp("data.alpaca.markets", 443), False),
     ("The open internet   directly (example.com)",     lambda: tcp("example.com", 443), False),
     ("The open internet   through the proxy",          lambda: through_proxy("example.com"), False),
+    # Notifications leave through a separate proxy. The agent must not be able to use it.
+    ("Discord             through the agent's proxy",  lambda: through_proxy("discord.com"), False),
+    ("Notify proxy        notify-proxy:3128",          lambda: tcp("notify-proxy", 3128), False),
+    ("Alertmanager        alertmanager:9093",          lambda: tcp("alertmanager", 9093), False),
 ]
 
 

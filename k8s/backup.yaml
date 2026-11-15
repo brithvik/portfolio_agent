@@ -1,0 +1,105 @@
+# Nightly database backup, and every backup is restore-tested before it counts.
+#
+# Each run: dump the database, restore the dump into a scratch database, check the restored
+# copy has the same number of snapshots and agent runs as the original, then drop the scratch
+# copy. A dump that can't be restored fails the job instead of sitting there looking fine.
+# The newest 7 verified backups are kept.
+#
+#   Run one now:   .\scripts\backup.ps1
+#
+# Honest limit: on this single-node cluster the backups live on the same disk as the
+# database. They protect against a bad migration, a mistaken DELETE, or a corrupted database,
+# not against losing the laptop. In the cloud, the same job would write to object storage.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-backups
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: backup
+spec:
+  schedule: "30 17 * * *"          # 5:30 PM New York time, after the day's data is in
+  timeZone: America/New_York
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 600
+      template:
+        metadata:
+          labels:
+            app: backup
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext: { runAsNonRoot: true, runAsUser: 999, fsGroup: 999 }   # the image's postgres user
+          containers:
+            - name: backup
+              image: postgres:17
+              command: ["bash", "-c"]
+              args:
+                - |
+                  set -euo pipefail
+                  file=/backups/portfolio-$(date -u +%Y%m%dT%H%M%SZ).sql.gz
+                  scratch=backup_verify
+                  rows() { psql -d "$1" -Atc "SELECT (SELECT count(*) FROM account_snapshots) + (SELECT count(*) FROM agent_runs)"; }
+
+                  before=$(rows "$PGDATABASE")
+                  echo "Dumping $PGDATABASE ($before snapshot and agent-run rows) ..."
+                  pg_dump -d "$PGDATABASE" --no-owner | gzip > "$file.partial"
+
+                  echo "Restore test: loading the dump into a scratch database ..."
+                  psql -d postgres -qc "DROP DATABASE IF EXISTS $scratch"
+                  psql -d postgres -qc "CREATE DATABASE $scratch"
+                  trap 'psql -d postgres -qc "DROP DATABASE IF EXISTS $scratch"; rm -f "$file.partial"' EXIT
+                  gunzip -c "$file.partial" | psql -d "$scratch" -q -v ON_ERROR_STOP=1 > /dev/null
+
+                  # These tables only ever grow, so a good restore has at least the rows that
+                  # existed before the dump started.
+                  restored=$(rows "$scratch")
+                  echo "Restored copy has $restored rows (needed at least $before)."
+                  if [ "$restored" -lt "$before" ]; then
+                    echo "FAILED: the restored copy is missing data. Previous backups are untouched."
+                    exit 1
+                  fi
+
+                  mv "$file.partial" "$file"
+                  ls -1t /backups/portfolio-*.sql.gz | tail -n +8 | xargs -r rm --
+                  echo "Verified backup saved: $file"
+                  ls -lh /backups
+              env:
+                - { name: PGHOST, value: postgres }
+                - name: PGUSER
+                  valueFrom:
+                    secretKeyRef: { name: postgres-credentials, key: POSTGRES_USER }
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef: { name: postgres-credentials, key: POSTGRES_PASSWORD }
+                - name: PGDATABASE
+                  valueFrom:
+                    secretKeyRef: { name: postgres-credentials, key: POSTGRES_DB }
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: ["ALL"] }
+              resources:
+                requests: { memory: 64Mi, cpu: 25m }
+                limits: { memory: 256Mi }
+              volumeMounts:
+                - { name: backups, mountPath: /backups }
+                - { name: tmp, mountPath: /tmp }
+          volumes:
+            - name: backups
+              persistentVolumeClaim: { claimName: postgres-backups }
+            - name: tmp
+              emptyDir: {}
