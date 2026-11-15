@@ -20,7 +20,7 @@ terraform {
 variable "app_image" {
   description = "The app image. The only place the version is set."
   type        = string
-  default     = "portfolio-agent:v9"
+  default     = "portfolio-agent:v10"
 }
 
 # ---------- Connect to the cluster built by layer 1 ----------
@@ -176,6 +176,66 @@ resource "kubernetes_config_map_v1" "grafana_dashboards" {
   }
 }
 
+# ---------- Notifications (optional) ----------
+# Add DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/... to .env to get alerts, daily
+# briefings and trade proposals in a Discord channel. Without it everything still deploys and
+# alerts simply stay on the dashboard.
+locals {
+  discord_webhook = trimspace(lookup(local.env, "DISCORD_WEBHOOK_URL", ""))
+  discord_on      = local.discord_webhook != ""
+}
+
+resource "kubernetes_secret_v1" "discord_webhook" {
+  metadata {
+    name = "discord-webhook"
+  }
+  data = {
+    webhook_url = local.discord_webhook
+  }
+}
+
+# Alertmanager's config. The webhook itself is not in here: Alertmanager reads it from the
+# secret above, mounted as a file, so the URL never appears in a ConfigMap.
+resource "kubernetes_config_map_v1" "alertmanager" {
+  metadata {
+    name = "alertmanager-config"
+  }
+  data = {
+    "alertmanager.yml" = local.discord_on ? local.alertmanager_discord : local.alertmanager_quiet
+  }
+}
+
+locals {
+  alertmanager_route = {
+    group_by        = ["alertname"]
+    group_wait      = "30s" # collect related alerts into one message
+    group_interval  = "5m"
+    repeat_interval = "12h" # remind twice a day while something stays broken
+  }
+
+  alertmanager_discord = yamlencode({
+    route = merge(local.alertmanager_route, { receiver = "discord" })
+    receivers = [{
+      name = "discord"
+      discord_configs = [{
+        webhook_url_file = "/etc/alertmanager-secrets/webhook_url"
+        send_resolved    = true
+        title            = "{{ if eq .Status \"firing\" }}ALERT{{ else }}Resolved{{ end }}: {{ .CommonLabels.alertname }} ({{ .CommonLabels.severity }})"
+        message          = "{{ range .Alerts }}{{ .Annotations.summary }}\n{{ end }}"
+        http_config = {
+          proxy_url = "http://notify-proxy:3128" # the only way out, and it only reaches discord.com
+        }
+      }]
+    }]
+  })
+
+  # No webhook configured: alerts are still evaluated and shown on the dashboard, just not sent.
+  alertmanager_quiet = yamlencode({
+    route     = merge(local.alertmanager_route, { receiver = "dashboard-only" })
+    receivers = [{ name = "dashboard-only" }]
+  })
+}
+
 # ---------- The app: every YAML file in the k8s folder ----------
 data "kubectl_path_documents" "app" {
   pattern = "${path.module}/../../k8s/*.yaml"
@@ -198,6 +258,8 @@ resource "kubectl_manifest" "app" {
     kubernetes_secret_v1.gateway_approver_token,
     kubernetes_secret_v1.grafana_admin,
     kubernetes_config_map_v1.grafana_dashboards,
+    kubernetes_secret_v1.discord_webhook,
+    kubernetes_config_map_v1.alertmanager,
   ]
 }
 
@@ -212,5 +274,7 @@ output "next_steps" {
     Run the red-team suite:          .\scripts\redteam.ps1
     Score the agent's accuracy:      .\scripts\evaluate.ps1
     Open the monitoring dashboard:   .\scripts\grafana.ps1
+    Back up the database now:        .\scripts\backup.ps1
+    Send a test notification:        .\scripts\notify-test.ps1
   EOT
 }

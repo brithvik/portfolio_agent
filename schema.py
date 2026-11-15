@@ -157,6 +157,11 @@ STATEMENTS = [
         total_tokens     INTEGER,
         results          JSONB NOT NULL
     )""",
+    # Where the notifier got to, so a restart never re-sends (or skips) a message
+    """CREATE TABLE IF NOT EXISTS notifier_state (
+        key     TEXT PRIMARY KEY,       -- 'briefing' or 'proposal'
+        last_id BIGINT NOT NULL
+    )""",
     # A random id for this installation, used in order ids so they stay unique at the broker
     # even if this database is ever rebuilt and proposal numbers start again from 1.
     "INSERT INTO gateway_settings (key, value) VALUES ('install_id', substr(md5(random()::text), 1, 8)) ON CONFLICT DO NOTHING",

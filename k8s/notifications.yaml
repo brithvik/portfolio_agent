@@ -1,0 +1,158 @@
+# ${app_image} is filled in by Terraform, so the version lives in one place.
+#
+# Notifications: what reaches your phone (a Discord channel), and nothing more.
+#
+#   Prometheus ──firing alerts──► Alertmanager ──┐
+#                                                ├──► notify-proxy ──► discord.com only
+#   PostgreSQL ◄──reads── notifier ──────────────┘
+#     (new briefings and trade proposals)
+#
+# The notify proxy is a second copy of the allowlisting proxy (egress_proxy.py) with a
+# different allowlist. It is separate from the agent's proxy on purpose: the agent can reach
+# Gemini and nothing else, and it cannot reach this proxy at all (see k8s/network.yaml, and
+# netcheck.py proves it). So Discord is not a channel the agent can use to leak anything.
+#
+# Optional: with no DISCORD_WEBHOOK_URL in .env everything here still runs, alerts just stay
+# on the dashboard. Terraform creates the alertmanager-config ConfigMap and the
+# discord-webhook Secret either way.
+
+# ---------- the notify proxy ----------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notify-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: notify-proxy }
+  template:
+    metadata:
+      labels: { app: notify-proxy }
+    spec:
+      automountServiceAccountToken: false
+      securityContext: { runAsNonRoot: true, runAsUser: 1000 }
+      containers:
+        - name: notify-proxy
+          image: ${app_image}
+          imagePullPolicy: IfNotPresent
+          command: ["python", "egress_proxy.py"]
+          env:
+            - name: ALLOWED_HOSTS
+              value: discord.com   # where the webhook lives, and nothing else
+          ports:
+            - containerPort: 3128
+          readinessProbe:
+            tcpSocket: { port: 3128 }
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { memory: 32Mi, cpu: 10m }
+            limits: { memory: 96Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: notify-proxy
+spec:
+  selector: { app: notify-proxy }
+  ports:
+    - port: 3128
+---
+# ---------- Alertmanager: groups alerts, sends them once, and says when they clear ----------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: alertmanager }
+  template:
+    metadata:
+      labels: { app: alertmanager }
+      annotations:
+        config-version: "1"   # bump to restart Alertmanager after its config changes
+    spec:
+      automountServiceAccountToken: false
+      securityContext: { runAsNonRoot: true, runAsUser: 65534, fsGroup: 65534 }
+      containers:
+        - name: alertmanager
+          image: prom/alertmanager:v0.33.0
+          args:
+            - --config.file=/etc/alertmanager/alertmanager.yml
+            - --storage.path=/alertmanager
+            - --cluster.listen-address=        # a single copy: no clustering
+          ports:
+            - containerPort: 9093
+          readinessProbe:
+            httpGet: { path: /-/ready, port: 9093 }
+            periodSeconds: 10
+            timeoutSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { memory: 32Mi, cpu: 10m }
+            limits: { memory: 128Mi }
+          volumeMounts:
+            - { name: config, mountPath: /etc/alertmanager }
+            - { name: webhook, mountPath: /etc/alertmanager-secrets, readOnly: true }
+            - { name: state, mountPath: /alertmanager }
+      volumes:
+        - name: config
+          configMap: { name: alertmanager-config }   # created by Terraform
+        - name: webhook
+          secret: { secretName: discord-webhook }    # created by Terraform from .env
+        - name: state                                # silences and "already sent" notes; fine to lose
+          emptyDir: { sizeLimit: 64Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager
+spec:
+  selector: { app: alertmanager }
+  ports:
+    - port: 9093
+---
+# ---------- the notifier: briefings and trade proposals (see notifier.py) ----------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notifier
+spec:
+  replicas: 1
+  strategy: { type: Recreate }   # never two at once, so a message is never sent twice
+  selector:
+    matchLabels: { app: notifier }
+  template:
+    metadata:
+      labels: { app: notifier }
+    spec:
+      automountServiceAccountToken: false
+      securityContext: { runAsNonRoot: true, runAsUser: 1000 }
+      containers:
+        - name: notifier
+          image: ${app_image}
+          imagePullPolicy: IfNotPresent
+          command: ["python", "notifier.py"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: postgres-credentials, key: DATABASE_URL }
+            - name: DISCORD_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef: { name: discord-webhook, key: webhook_url }
+            - { name: HTTPS_PROXY, value: "http://notify-proxy:3128" }
+            - { name: NO_PROXY, value: "postgres,localhost,127.0.0.1,.svc,.cluster.local" }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { memory: 48Mi, cpu: 10m }
+            limits: { memory: 128Mi }

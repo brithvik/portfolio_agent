@@ -13,6 +13,7 @@ from pathlib import Path
 OUT = Path(__file__).parent / "dashboards" / "portfolio-agent.json"
 DS = {"type": "prometheus", "uid": "prometheus"}
 GREEN, YELLOW, RED, BLUE = "green", "yellow", "red", "blue"
+START_EQUITY = 100_000   # Alpaca paper accounts start here
 
 _panels = []
 _y = 0
@@ -30,7 +31,7 @@ def row(title):
 
 
 def panel(kind, title, targets, w, h, x, description="", unit=None, steps=None, mappings=None,
-          decimals=None, options=None, minmax=None):
+          decimals=None, options=None, minmax=None, no_value=None):
     defaults = {}
     if unit:
         defaults["unit"] = unit
@@ -41,6 +42,8 @@ def panel(kind, title, targets, w, h, x, description="", unit=None, steps=None, 
         defaults["mappings"] = mappings
     if decimals is not None:
         defaults["decimals"] = decimals
+    if no_value:
+        defaults["noValue"] = no_value
     if minmax:
         defaults["min"], defaults["max"] = minmax
     _panels.append({
@@ -69,19 +72,24 @@ row("Is everything healthy?")
 stat("Alerts firing", 'count(ALERTS{alertstate="firing"}) or vector(0)', 0,
      description="Alert rules are in k8s/monitoring.yaml. Open Prometheus to see which ones.",
      steps=[(None, GREEN), (1, RED)], decimals=0)
-stat("Last snapshot", "portfolio_snapshot_age_seconds", 4, unit="s",
-     description="Snapshots run every 5 minutes during market hours, so this grows overnight and on weekends.",
-     steps=[(None, GREEN), (900, YELLOW), (86400 * 3, RED)])
+stat("Data is current",
+     "clamp_max((portfolio_snapshot_age_seconds < bool 900) + (1 - market_hours), 1)", 4,
+     mappings=[{"type": "value", "options": {"1": {"text": "Yes", "color": GREEN},
+                                             "0": {"text": "STALE", "color": RED}}}],
+     description="Snapshots run every 5 minutes during US market hours. Outside market hours there is "
+                 "nothing to collect, so this stays green. Red means the collector stopped during the day.")
 stat("Trading", "gateway_trading_enabled", 8,
      mappings=[{"type": "value", "options": {"1": {"text": "Enabled", "color": GREEN},
                                              "0": {"text": "KILL SWITCH ON", "color": RED}}}])
 stat("Waiting for you", "trade_proposals_waiting", 12, decimals=0,
      description="Trade proposals waiting for a decision on the approval page.",
      steps=[(None, GREEN), (1, BLUE)])
-stat("Live answers grounded (7d)",
-     'agent_answer_numbers_grounded{window="7d"} / agent_answer_numbers_cited{window="7d"}', 16,
-     unit="percentunit", decimals=1, minmax=(0, 1),
-     description="Every number in every real answer, checked against the data the agent saw (grounding.py).",
+stat("Live answers grounded (24h)",
+     '(agent_answer_numbers_grounded{window="24h"} / agent_answer_numbers_cited{window="24h"})'
+     ' and (agent_answer_numbers_cited{window="24h"} > 0)', 16,
+     unit="percentunit", decimals=1, minmax=(0, 1), no_value="No answers yet",
+     description="Every number in every real answer from the last 24 hours, checked against the data the "
+                 "agent saw (grounding.py). The 7-day view is in Accuracy and safety below.",
      steps=[(None, RED), (0.9, YELLOW), (0.98, GREEN)])
 stat("Red team resisted", "redteam_attacks_resisted / redteam_attacks", 20,
      unit="percentunit", decimals=0, minmax=(0, 1),
@@ -90,7 +98,8 @@ stat("Red team resisted", "redteam_attacks_resisted / redteam_attacks", 20,
 next_line(4)
 
 row("Portfolio")
-panel("timeseries", "Portfolio value", [("portfolio_value_dollars", "value")], 16, 8, 0, unit="currencyUSD")
+panel("timeseries", f"Profit / loss vs ${START_EQUITY:,.0f} start", [(f"portfolio_value_dollars - {START_EQUITY}", "profit / loss")], 16, 8, 0, unit="currencyUSD",
+      description="Alpaca paper accounts start with $100,000. Plotting the difference keeps small moves visible.")
 panel("timeseries", "Cash", [("portfolio_cash_dollars", "cash")], 8, 8, 16, unit="currencyUSD")
 next_line(8)
 
@@ -103,10 +112,11 @@ panel("timeseries", "Tokens per hour", [("sum by (kind) (increase(agent_tokens_t
 next_line(8)
 panel("bargauge", "Tool calls", [("sum by (tool) (agent_tool_calls_total)", "{{tool}}")], 8, 8, 0,
       options={"orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"]}})
-panel("bargauge", "LLM calls by model and outcome",
-      [('sum by (model, outcome) (agent_model_calls_total)', "{{model}} {{outcome}}")], 8, 8, 8,
-      description="Calls to the fallback model mean the main model was failing.",
-      options={"orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"]}})
+panel("stat", "LLM calls by model and outcome",
+      [('sum by (model, outcome) (agent_model_calls_total)', "{{model}} / {{outcome}}")], 8, 8, 8,
+      description="Calls to the fallback model, or any error outcome, mean the main model was failing.",
+      options={"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "none", "graphMode": "none",
+               "textMode": "value_and_name", "orientation": "vertical"})
 panel("bargauge", "Agent runs by outcome", [("sum by (kind, status) (agent_runs_total)", "{{kind}} {{status}}")],
       8, 8, 16, options={"orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"]}})
 next_line(8)

@@ -87,8 +87,8 @@
     },
     {
       "type": "stat",
-      "title": "Last snapshot",
-      "description": "Snapshots run every 5 minutes during market hours, so this grows overnight and on weekends.",
+      "title": "Data is current",
+      "description": "Snapshots run every 5 minutes during US market hours. Outside market hours there is nothing to collect, so this stays green. Red means the collector stopped during the day.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -106,33 +106,27 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "portfolio_snapshot_age_seconds",
+          "expr": "clamp_max((portfolio_snapshot_age_seconds < bool 900) + (1 - market_hours), 1)",
           "legendFormat": ""
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 900
-              },
-              {
-                "color": "red",
-                "value": 259200
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "Yes",
+                  "color": "green"
+                },
+                "0": {
+                  "text": "STALE",
+                  "color": "red"
+                }
               }
-            ]
-          },
-          "color": {
-            "mode": "thresholds"
-          }
+            }
+          ]
         },
         "overrides": []
       },
@@ -266,8 +260,8 @@
     },
     {
       "type": "stat",
-      "title": "Live answers grounded (7d)",
-      "description": "Every number in every real answer, checked against the data the agent saw (grounding.py).",
+      "title": "Live answers grounded (24h)",
+      "description": "Every number in every real answer from the last 24 hours, checked against the data the agent saw (grounding.py). The 7-day view is in Accuracy and safety below.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -285,7 +279,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "agent_answer_numbers_grounded{window=\"7d\"} / agent_answer_numbers_cited{window=\"7d\"}",
+          "expr": "(agent_answer_numbers_grounded{window=\"24h\"} / agent_answer_numbers_cited{window=\"24h\"}) and (agent_answer_numbers_cited{window=\"24h\"} > 0)",
           "legendFormat": ""
         }
       ],
@@ -313,6 +307,7 @@
             "mode": "thresholds"
           },
           "decimals": 1,
+          "noValue": "No answers yet",
           "min": 0,
           "max": 1
         },
@@ -407,8 +402,8 @@
     },
     {
       "type": "timeseries",
-      "title": "Portfolio value",
-      "description": "",
+      "title": "Profit / loss vs $100,000 start",
+      "description": "Alpaca paper accounts start with $100,000. Plotting the difference keeps small moves visible.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -426,8 +421,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "portfolio_value_dollars",
-          "legendFormat": "value"
+          "expr": "portfolio_value_dollars - 100000",
+          "legendFormat": "profit / loss"
         }
       ],
       "fieldConfig": {
@@ -628,9 +623,9 @@
       "id": 15
     },
     {
-      "type": "bargauge",
+      "type": "stat",
       "title": "LLM calls by model and outcome",
-      "description": "Calls to the fallback model mean the main model was failing.",
+      "description": "Calls to the fallback model, or any error outcome, mean the main model was failing.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -649,7 +644,7 @@
             "uid": "prometheus"
           },
           "expr": "sum by (model, outcome) (agent_model_calls_total)",
-          "legendFormat": "{{model}} {{outcome}}"
+          "legendFormat": "{{model}} / {{outcome}}"
         }
       ],
       "fieldConfig": {
@@ -657,12 +652,15 @@
         "overrides": []
       },
       "options": {
-        "orientation": "horizontal",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
           ]
-        }
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "orientation": "vertical"
       },
       "id": 16
     },

@@ -4,6 +4,7 @@
 #   collectors ──► Postgres            collectors ──► Alpaca (read-only data)
 #   agent ──────► Postgres             gateway ─────► Alpaca (the only place orders come from)
 #   agent ──────► gateway              agent ──────► egress proxy ──► Gemini API only
+#   Alertmanager, notifier ──► notify proxy ──► discord.com only   (the agent can't reach this proxy)
 #
 # The agent has NO direct path to the internet. It can't reach Alpaca even by IP address.
 #
@@ -37,7 +38,7 @@ spec:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
 ---
-# 3. Postgres accepts connections only from the three parts that use it.
+# 3. Postgres accepts connections only from the parts that use it.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -50,7 +51,7 @@ spec:
     - from:
         - podSelector:
             matchExpressions:
-              - { key: app, operator: In, values: ["collector", "agent", "gateway", "metrics-exporter"] }
+              - { key: app, operator: In, values: ["collector", "agent", "gateway", "metrics-exporter", "notifier", "backup"] }
       ports:
         - { protocol: TCP, port: 5432 }
 ---
@@ -187,6 +188,11 @@ spec:
             matchLabels: { app: metrics-exporter }
       ports:
         - { protocol: TCP, port: 9100 }
+    - to:
+        - podSelector:
+            matchLabels: { app: alertmanager }
+      ports:
+        - { protocol: TCP, port: 9093 }
 ---
 # Your browser reaches Grafana through kubectl port-forward, which these rules don't affect.
 apiVersion: networking.k8s.io/v1
@@ -203,3 +209,87 @@ spec:
             matchLabels: { app: prometheus }
       ports:
         - { protocol: TCP, port: 9090 }
+---
+# 9. Notifications. Alertmanager hears only from Prometheus, and can talk only to the notify
+#    proxy. The notifier can read the database and talk to the notify proxy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: alertmanager
+spec:
+  podSelector:
+    matchLabels: { app: alertmanager }
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app: prometheus }
+      ports:
+        - { protocol: TCP, port: 9093 }
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: { app: notify-proxy }
+      ports:
+        - { protocol: TCP, port: 3128 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: notifier
+spec:
+  podSelector:
+    matchLabels: { app: notifier }
+  policyTypes: ["Ingress", "Egress"]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: { app: postgres }
+      ports:
+        - { protocol: TCP, port: 5432 }
+    - to:
+        - podSelector:
+            matchLabels: { app: notify-proxy }
+      ports:
+        - { protocol: TCP, port: 3128 }
+---
+# The notify proxy accepts only Alertmanager and the notifier. Agent pods are NOT on this
+# list, so the agent has no route to Discord. Its own allowlist then permits discord.com only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: notify-proxy
+spec:
+  podSelector:
+    matchLabels: { app: notify-proxy }
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - { key: app, operator: In, values: ["alertmanager", "notifier"] }
+      ports:
+        - { protocol: TCP, port: 3128 }
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"]
+      ports:
+        - { protocol: TCP, port: 443 }
+---
+# 10. The nightly backup job talks to Postgres and nothing else.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backup
+spec:
+  podSelector:
+    matchLabels: { app: backup }
+  policyTypes: ["Ingress", "Egress"]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: { app: postgres }
+      ports:
+        - { protocol: TCP, port: 5432 }
