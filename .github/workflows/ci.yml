@@ -1,6 +1,7 @@
 # Continuous integration: every push and pull request is checked automatically.
 #
-#   1. Python      lint, then all tests, including the gateway tests against a real PostgreSQL
+#   1. Python      lint, all tests (gateway and metrics tests against a real PostgreSQL),
+#                  and a check that the Grafana dashboard JSON matches the code that builds it
 #   2. Terraform   formatting and validation of both layers
 #   3. Kubernetes  every manifest validated against the official Kubernetes schemas
 #   4. Image       the Docker image builds, then gets scanned for known vulnerabilities
@@ -52,6 +53,8 @@ jobs:
           python -m pip install ruff==0.17.3
       - name: Lint (syntax errors, undefined names, unused imports)
         run: ruff check --select E9,F --target-version py312 .
+      - name: The dashboard JSON matches the code that builds it
+        run: python monitoring/build_dashboard.py --check
       - name: Run all tests
         env:
           TEST_DATABASE_URL: postgresql://ci:ci@localhost:5432/portfolio_test
