@@ -1,0 +1,163 @@
+# ${app_image} is filled in by Terraform, so the version lives in one place.
+#
+# The idea engine's daily data run, weekdays at 6:30 PM New York time (after the close):
+# refresh the universe of tradable stocks, update prices, then run the screens that find
+# stocks rising on sustained demand. See market.py and screens.py.
+#
+#   Run it now:  .\scripts\market.ps1      (the first run loads a year of prices: allow ~10 minutes)
+#
+# It carries the "collector" label, so the collectors' network rules apply: Postgres and
+# Alpaca's read-only data, nothing else. It holds no trading path and no LLM key.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: market-data
+spec:
+  schedule: "30 18 * * 1-5"
+  timeZone: America/New_York
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 7200      # if the laptop was asleep at 6:30, still run when it wakes
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 2400
+      template:
+        metadata:
+          labels:
+            app: collector
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+          containers:
+            - name: market-data
+              image: ${app_image}
+              imagePullPolicy: IfNotPresent
+              command: ["python", "market.py", "daily"]
+              envFrom:
+                - secretRef:
+                    name: alpaca-credentials
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-credentials
+                      key: DATABASE_URL
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests: { memory: 128Mi, cpu: 50m }
+                limits: { memory: 512Mi }
+---
+# News for every stock in the universe, hourly, grouped into events (see events.py).
+# After a gap (the laptop was asleep) the next run reaches back to cover it, up to a week.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: market-news
+spec:
+  schedule: "20 * * * *"
+  timeZone: America/New_York
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 1800
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 1500
+      template:
+        metadata:
+          labels:
+            app: collector
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+          containers:
+            - name: market-news
+              image: ${app_image}
+              imagePullPolicy: IfNotPresent
+              command: ["python", "market.py", "news"]
+              envFrom:
+                - secretRef:
+                    name: alpaca-credentials
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-credentials
+                      key: DATABASE_URL
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests: { memory: 96Mi, cpu: 50m }
+                limits: { memory: 384Mi }
+---
+# Labels the news events behind today's candidates (see classify.py), weekdays at 7:15 PM,
+# after the market-data job. It carries the "agent" label on purpose: this is the one job in
+# the idea engine that talks to the model, so it gets the agent's network rules (the database,
+# and Gemini through the allowlisting proxy) and, like the agent, no Alpaca keys.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: classify-events
+spec:
+  schedule: "15 19 * * 1-5"
+  timeZone: America/New_York
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 7200
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 1800
+      template:
+        metadata:
+          labels:
+            app: agent
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+          containers:
+            - name: classify-events
+              image: ${app_image}
+              imagePullPolicy: IfNotPresent
+              command: ["python", "classify.py", "run"]
+              envFrom:
+                - secretRef:
+                    name: gemini-credentials
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-credentials
+                      key: DATABASE_URL
+                - name: HTTPS_PROXY
+                  value: http://egress-proxy:3128
+                - name: NO_PROXY
+                  value: postgres,gateway,localhost,127.0.0.1,.svc,.cluster.local
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests: { memory: 128Mi, cpu: 50m }
+                limits: { memory: 384Mi }

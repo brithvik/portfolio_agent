@@ -88,7 +88,7 @@ flowchart LR
 
 ## How I know it is correct
 
-The agent is not trusted to do arithmetic. **Tools do the math; the model only explains.** Then every answer is checked.
+The agent is not trusted to do arithmetic, or even to type a number. **Tools do the math, the code writes every figure, and the model only explains.** Each number in a tool result carries a handle like `[F7]`; the model writes the handle and the code substitutes the exact value, recording which field it came from. Then every answer is checked, and a number that isn't in the data gets one repair attempt before it is reported.
 
 - **Evaluation suite:** 14 questions with known answers. Latest run: 14 of 14 correct, 100% of cited numbers grounded.
 - **Grounding check:** every number in an answer must appear in the data the agent actually retrieved, matched by type (dollars, percent, plain number).
@@ -100,7 +100,7 @@ The agent is not trusted to do arithmetic. **Tools do the math; the model only e
 
 ## Monitoring
 
-Grafana shows 22 panels in four groups: health, portfolio, agent behaviour, and accuracy and safety. Ten Prometheus alert rules cover stale data, failing runs, model errors, ungrounded answers, a failing evaluation, a red-team regression, the kill switch being on, and proposals waiting for a decision. Alertmanager groups them, sends each one once to Discord, and says when it clears.
+Grafana shows 22 panels in four groups: health, portfolio, agent behaviour, and accuracy and safety. Twelve Prometheus alert rules cover stale portfolio data, stale market prices and news, failing runs, model errors, ungrounded answers, a failing evaluation, a red-team regression, the kill switch being on, and proposals waiting for a decision. Alertmanager groups them, sends each one once to Discord, and says when it clears.
 
 The dashboard is a Python file. Terraform deploys the generated JSON and Grafana's provisioning forbids editing it in the UI, so what runs is what was reviewed. CI fails if the JSON is out of date.
 
@@ -115,7 +115,7 @@ The dashboard is a Python file. Terraform deploys the generated JSON and Grafana
 | **Docker** | One slim Python 3.12 image, non-root user, built and scanned with Trivy in CI. |
 | **Kubernetes** | CronJobs (New York time zone), Deployments, a Postgres StatefulSet, 14 NetworkPolicies, resource limits, health probes. |
 | **Terraform** | Two layers. `cluster` creates the kind cluster. `platform` deploys everything on it, generates random passwords, and reads API keys from `.env`. Swapping the first layer is all it takes to move to a cloud cluster. |
-| **CI** | GitHub Actions with actions pinned to commit SHAs: Ruff, 88 tests against a real Postgres (including the agent loop driven by a scripted stand-in model), `terraform fmt` and `validate`, kubeconform on every manifest, image build and Trivy scan. |
+| **CI** | GitHub Actions with actions pinned to commit SHAs: Ruff, 149 tests against a real Postgres (including the agent loop driven by a scripted stand-in model), `terraform fmt` and `validate`, kubeconform on every manifest, image build and Trivy scan. |
 
 ---
 

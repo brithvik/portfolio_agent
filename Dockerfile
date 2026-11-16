@@ -8,5 +8,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN useradd --uid 1000 --create-home app
 COPY *.py ./
 COPY web ./web
+COPY rules ./rules
+COPY evals ./evals
 USER 1000
 CMD ["python", "collector.py", "snapshot"]

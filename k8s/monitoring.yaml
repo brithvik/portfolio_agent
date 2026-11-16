@@ -117,6 +117,18 @@ data:
             labels: { severity: warning }
             annotations:
               summary: The latest evaluation run fell below target (90% of questions, 95% of numbers grounded).
+          - alert: MarketPricesStale
+            expr: market_prices_age_seconds > 4.5 * 86400
+            for: 30m
+            labels: { severity: warning }
+            annotations:
+              summary: Market prices haven't updated in over 4 days (a long weekend is about 4). Run .\scripts\market.ps1 and check the market-data CronJob.
+          - alert: MarketNewsStale
+            expr: market_news_age_seconds > 6 * 3600
+            for: 30m
+            labels: { severity: info }
+            annotations:
+              summary: The hourly market news job hasn't finished in over 6 hours. Check the market-news CronJob.
           - alert: EvaluationOverdue
             expr: time() - eval_last_run_timestamp_seconds > 7 * 86400
             labels: { severity: info }
@@ -162,7 +174,7 @@ spec:
     metadata:
       labels: { app: prometheus }
       annotations:
-        config-version: "2"   # bump to restart Prometheus after editing the rules above
+        config-version: "3"   # bump to restart Prometheus after editing the rules above
     spec:
       automountServiceAccountToken: false
       securityContext: { runAsNonRoot: true, runAsUser: 65534, fsGroup: 65534 }
