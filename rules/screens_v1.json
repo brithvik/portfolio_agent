@@ -1,0 +1,15 @@
+{
+  "version": "screens-v1",
+  "note": "Fixed before any results were collected. To change a threshold, copy this file to screens_v2.json and point SCREEN_RULES at it; results are stored per version, so v1's record is never rewritten.",
+  "floor": {"min_price": 5.0, "min_avg_dollar_volume": 5000000},
+  "established": {"min_price": 10.0, "min_avg_dollar_volume": 50000000},
+  "min_history_days": 127,
+  "rising": {
+    "min_excess_3m": 0.0,
+    "min_excess_6m": 0.0,
+    "min_persistence": 0.625,
+    "min_accumulation": 1.2,
+    "max_below_high": 0.10
+  },
+  "extended": {"ret_1m_over": 0.40, "above_50d_over": 0.35}
+}

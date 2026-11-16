@@ -16,6 +16,7 @@ to the model, repeating until it answers. The code (not the model) controls ever
 import base64
 import json
 import os
+import re
 import sys
 import time
 
@@ -25,6 +26,8 @@ from google import genai
 from google.genai import errors, types
 from psycopg.types.json import Jsonb
 
+from citations import Citations
+from grounding import check_grounding
 from schema import ensure_schema
 from tools import DECLARATIONS, PROPOSE_DECLARATION, TOOLS, propose_trade
 
@@ -35,6 +38,9 @@ FALLBACK_MODEL = os.environ.get("GEMINI_FALLBACK_MODEL", "")
 MAX_STEPS = int(os.environ.get("AGENT_MAX_STEPS", "8"))
 TIMEOUT_MS = int(os.environ.get("AGENT_TIMEOUT_MS", "60000"))
 MAX_PROPOSALS_PER_RUN = 2
+# Handles for every figure (see citations.py). AGENT_CITATIONS=off goes back to the model typing
+# numbers itself, which is only useful for measuring how much the handles help.
+CITATIONS_ON = os.environ.get("AGENT_CITATIONS", "on").lower() != "off"
 RETRYABLE = {429, 500, 502, 503, 504}
 
 SYSTEM = """You are a careful portfolio analyst for one person's brokerage account.
@@ -48,11 +54,18 @@ Rules:
 - NEVER do arithmetic yourself: don't add, subtract, or average numbers. For any total or combined
   percentage, quote the pre-computed figures from the tools (for example totals.top_3_positions or
   totals.by_sector). If a figure you need isn't provided, say it isn't available.
+{citation_rule}
 - Don't count an index fund as part of a sector; tools explain why in "notes".
 - Be specific: cite numbers (dollars, percentages) and the data's timestamp.
 - Point out risks plainly (concentration, big losses, important news), without hype or fear.
 - You are not a licensed financial advisor. Don't promise outcomes or predict prices.
 - Keep answers short and clear: a few short paragraphs or a short list."""
+
+CITATION_RULE = """- Every number in a tool result comes with a handle, like "60.67% [F7]". When you state a figure
+  from the data, write ONLY its handle, for example: "Your top three holdings are [F7] of the
+  portfolio." The system replaces each handle with the exact figure. Don't type the figure itself,
+  and never write a handle you weren't given."""
+NO_CITATION_RULE = "- Quote figures exactly as the tools give them."
 
 READ_ONLY_RULE = ("You are read-only in this run. If asked to trade, explain that you can only "
                   "analyze, and describe what the person could consider doing themselves.")
@@ -88,7 +101,8 @@ class Agent:
         )
         self.config = types.GenerateContentConfig(
             system_instruction=SYSTEM.format(
-                trading_rule=PROPOSAL_RULE if allow_proposals else READ_ONLY_RULE),
+                trading_rule=PROPOSAL_RULE if allow_proposals else READ_ONLY_RULE,
+                citation_rule=CITATION_RULE if CITATIONS_ON else NO_CITATION_RULE),
             tools=[types.Tool(function_declarations=[
                 types.FunctionDeclaration(**d) for d in declarations])],
             # We run each tool call ourselves, so the code stays in control and logs every step
@@ -97,6 +111,8 @@ class Agent:
         )
         self.run_id = None
         self.step = 0
+        self.citations = Citations()
+        self.sources = []          # tool results exactly as returned, for the grounding check
 
     # ---------- audit log ----------
     def log_step(self, kind, name, args=None, result=None, duration_ms=None, error=None):
@@ -151,6 +167,7 @@ class Agent:
             if name == "propose_trade":
                 self.proposals_made += 1
                 args["run_id"] = self.run_id  # set by the code, never by the model
+            args = {key: self.citations.resolve_argument(value) for key, value in args.items()}
             try:
                 result = self.tools[name](self.conn, **args)
             except TypeError as e:  # wrong or extra arguments from the model
@@ -162,7 +179,9 @@ class Agent:
                       duration_ms=int((time.time() - started) * 1000),
                       error=result.get("error") if isinstance(result, dict) else None)
         print(f"  tool: {name}({json.dumps(args)})", flush=True)
-        return logged
+        self.sources.append(logged)
+        # The model sees every number with its handle; the log above keeps the plain result
+        return self.citations.tag(name, logged) if CITATIONS_ON else logged
 
     # ---------- the agent loop ----------
     def run(self, kind, question):
@@ -173,7 +192,8 @@ class Agent:
         totals = {"in": 0, "out": 0}
         used_model = None
         try:
-            for _ in range(MAX_STEPS):
+            repaired = False
+            for attempt in range(MAX_STEPS):
                 used_model, response = self.call_model(contents)
                 usage = response.usage_metadata
                 totals["in"] += getattr(usage, "prompt_token_count", 0) or 0
@@ -183,8 +203,17 @@ class Agent:
                 contents.append(response.candidates[0].content)
                 calls = response.function_calls or []
                 if not calls:
-                    answer = (response.text or "").strip() or "(The model returned no answer.)"
-                    self.finish("done", answer, used_model, totals)
+                    draft = (response.text or "").strip() or "(The model returned no answer.)"
+                    answer, checks = self.verify(draft, question)
+                    problems = checks["unknown_handles"] or checks["ungrounded"]
+                    if problems and not repaired and attempt < MAX_STEPS - 1:
+                        repaired = True     # one chance to fix it, with the exact problems spelled out
+                        contents.append(types.Content(role="user", parts=[types.Part(text=self.repair_request(checks))]))
+                        continue
+                    checks["repaired"] = repaired
+                    if checks["unknown_handles"]:
+                        answer = re.sub(r"\[F\d+\]", "[figure unavailable]", answer)
+                    self.finish("done", answer, used_model, totals, draft=draft, checks=checks)
                     return answer
 
                 results = [types.Part.from_function_response(
@@ -196,12 +225,39 @@ class Agent:
             self.finish("failed", None, used_model, totals, error=f"{type(e).__name__}: {e}"[:500])
             raise
 
-    def finish(self, status, answer, model, totals, error=None):
+    # ---------- checking the answer before anyone sees it ----------
+    def verify(self, draft, question):
+        """Fill in the handles, then check every remaining number against the data."""
+        answer, used, unknown = self.citations.render(draft)
+        grounding = check_grounding(answer, self.sources, question)
+        return answer, {
+            "figures_from_handles": len(used),
+            "cited_fields": self.citations.paths(used),     # which field each figure came from
+            "unknown_handles": sorted(set(unknown)),
+            "numbers_cited": grounding["numbers_cited"],
+            "ungrounded": grounding["ungrounded"],
+        }
+
+    @staticmethod
+    def repair_request(checks):
+        lines = ["Your draft can't be sent yet:"]
+        if checks["unknown_handles"]:
+            lines.append(f"- These handles don't exist: {', '.join('[' + h + ']' for h in checks['unknown_handles'])}. "
+                         "Use only handles that appear in the tool results.")
+        for item in checks["ungrounded"][:8]:
+            lines.append(f"- The number {item['number']} is not in the data (\"...{item['context']}...\"). "
+                         "Replace it with the handle of the figure you mean, or remove the claim.")
+        lines.append("Rewrite the whole answer. Use handles for every figure from the data and do no arithmetic.")
+        return "\n".join(lines)
+
+    def finish(self, status, answer, model, totals, error=None, draft=None, checks=None):
         self.conn.execute(
             """UPDATE agent_runs SET status = %s, answer = %s, model = %s, steps = %s,
-                   input_tokens = %s, output_tokens = %s, error = %s, finished_at = now()
+                   input_tokens = %s, output_tokens = %s, error = %s, finished_at = now(),
+                   answer_draft = %s, checks = %s
                WHERE id = %s""",
-            (status, answer, model, self.step, totals["in"], totals["out"], error, self.run_id))
+            (status, answer, model, self.step, totals["in"], totals["out"], error, draft,
+             Jsonb(checks) if checks is not None else None, self.run_id))
 
 
 def connect_with_retry(url, attempts=10, delay=3):

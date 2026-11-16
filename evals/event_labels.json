@@ -1,0 +1,334 @@
+{
+ "about": "Real headlines from the first market run (Nov 2026), labeled by hand. Labels were drafted with AI help and are waiting for the project owner's review; company names are approximate. Known weakness: few negative examples. Add more with scripts/export-events.ps1.",
+ "examples": [
+  {
+   "symbol": "JAKK",
+   "company": "JAKKS Pacific, Inc. Common Stock",
+   "headline": "JAKKS Pacific Secures Global Master Toy License for Skydance's 'K-Pop: The Debut'",
+   "type": "contract_or_partnership",
+   "direction": "positive"
+  },
+  {
+   "symbol": "JAKK",
+   "company": "JAKKS Pacific, Inc. Common Stock",
+   "headline": "Skydance, JAKKS Pacific Sign Master Toy Agreement For K-Pop: The Debut",
+   "type": "contract_or_partnership",
+   "direction": "positive"
+  },
+  {
+   "symbol": "JAKK",
+   "company": "JAKKS Pacific, Inc. Common Stock",
+   "headline": "JAKKS Pacific Announces Licensing Partnership for 'Invincible' Consumer Products",
+   "type": "contract_or_partnership",
+   "direction": "positive"
+  },
+  {
+   "symbol": "CLMB",
+   "company": "Climb Global Solutions, Inc. Common Stock",
+   "headline": "Climb Global Solutions Acquires NeoVAD For ~$18M",
+   "type": "acquisition_acquirer",
+   "direction": "unclear"
+  },
+  {
+   "symbol": "CLMB",
+   "company": "Climb Global Solutions, Inc. Common Stock",
+   "headline": "Analysts Upgrade Revenue and Earnings Forecasts for Climb Global Solutions",
+   "type": "analyst_note",
+   "direction": "positive"
+  },
+  {
+   "symbol": "CLMB",
+   "company": "Climb Global Solutions, Inc. Common Stock",
+   "headline": "Freedom Capital Markets Raises Price Target on Climb Global Solutions to $50",
+   "type": "analyst_note",
+   "direction": "positive"
+  },
+  {
+   "symbol": "FIGS",
+   "company": "FIGS, Inc. Class A Common Stock",
+   "headline": "Oppenheimer Maintains Outperform on FIGS, Raises Price Target to $25",
+   "type": "analyst_note",
+   "direction": "positive"
+  },
+  {
+   "symbol": "FIGS",
+   "company": "FIGS, Inc. Class A Common Stock",
+   "headline": "Keybanc Maintains Overweight on FIGS, Raises Price Target to $27",
+   "type": "analyst_note",
+   "direction": "positive"
+  },
+  {
+   "symbol": "FIGS",
+   "company": "FIGS, Inc. Class A Common Stock",
+   "headline": "FIGS, Inc. Reports Q3 2026 Revenue of $190.7 Million",
+   "type": "earnings_results",
+   "direction": "unclear"
+  },
+  {
+   "symbol": "TBBB",
+   "company": "BBB Foods Inc. Class A Common Shares",
+   "headline": "BBB Foods Q3 2026 Earnings Call Transcript",
+   "type": "earnings_results",
+   "direction": "unclear"
+  },
+  {
+   "symbol": "TBBB",
+   "company": "BBB Foods Inc. Class A Common Shares",
+   "headline": "BBB Foods Q3 EPS $0.01 Beats $(0.15) Estimate, Sales $1.648B Beat $1.610B Estimate",
+   "type": "earnings_results",
+   "direction": "positive"
+  },
+  {
+   "symbol": "TBBB",
+   "company": "BBB Foods Inc. Class A Common Shares",
+   "headline": "UBS Maintains Buy on BBB Foods, Raises Price Target to $69",
+   "type": "analyst_note",
+   "direction": "positive"
+  },
+  {
+   "symbol": "STGW",
+   "company": "Stagwell Inc. Class A Common Stock",
+   "headline": "Needham Maintains Buy on Stagwell, Raises Price Target to $12",
+   "type": "analyst_note",
+   "direction": "positive"
+  },
+  {
+   "symbol": "STGW",
+   "company": "Stagwell Inc. Class A Common Stock",
+   "headline": "Stagwell Raises FY2026 Adj EPS Guidance from $1.03-$1.17 to $1.07-$1.21 vs $1.11 Est",
+   "type": "guidance",
+   "direction": "positive"
+  },
+  {
+   "symbol": "STGW",
+   "company": "Stagwell Inc. Class A Common Stock",
+   "headline": "Stagwell Expands Partnership With Palantir Over AI-Powered Marketing Services",
+   "type": "contract_or_partnership",
+   "direction": "positive"
+  },
+  {
+   "symbol": "PRCH",
+   "company": "Porch Group, Inc. Common Stock",
+   "headline": "Oppenheimer Maintains Outperform on Porch Group, Raises Price Target to $25",
+   "type": "analyst_note",
+   "direction": "positive"
+  },
+  {
+   "symbol": "PRCH",
+   "company": "Porch Group, Inc. Common Stock",
+   "headline": "Craig-Hallum Maintains Buy on Porch Group, Raises Price Target to $22",
+   "type": "analyst_note",
+   "direction": "positive"
+  },
+  {
+   "symbol": "PRCH",
+   "company": "Porch Group, Inc. Common Stock",
+   "headline": "Porch Group Agrees To Acquire Allied Trust's Insurance Carrier, Managing General Agency",
+   "type": "acquisition_acquirer",
+   "direction": "unclear"
+  },
+  {
+   "symbol": "ARHS",
+   "company": "Arhaus, Inc. Class A Common Stock",
+   "headline": "TD Cowen Maintains Buy on Arhaus, Raises Price Target to $16",
+   "type": "analyst_note",
+   "direction": "positive"
+  },
+  {
+   "symbol": "ARHS",
+   "company": "Arhaus, Inc. Class A Common Stock",
+   "headline": "Telsey Advisory Group Maintains Market Perform on Arhaus, Raises Price Target to $14",
+   "type": "analyst_note",
+   "direction": "positive"
+  },
+  {
+   "symbol": "ARHS",
+   "company": "Arhaus, Inc. Class A Common Stock",
+   "headline": "Arhaus Q3 EPS $0.34 Beats $0.09 Estimate, Sales $368.000M Miss $370.601M Estimate",
+   "type": "earnings_results",
+   "direction": "mixed"
+  },
+  {
+   "symbol": "CLDT",
+   "company": "Chatham Lodging Trust Common Shares",
+   "headline": "Chatham Lodging Q3 2026 Earnings Call Transcript",
+   "type": "earnings_results",
+   "direction": "unclear"
+  },
+  {
+   "symbol": "CLDT",
+   "company": "Chatham Lodging Trust Common Shares",
+   "headline": "Chatham Lodging Trust Announces Third Quarter 2026 Financial Results",
+   "type": "earnings_results",
+   "direction": "unclear"
+  },
+  {
+   "symbol": "CLDT",
+   "company": "Chatham Lodging Trust Common Shares",
+   "headline": "Chatham Lodging Trust Raises FY2026 FFO Guidance from $1.28-$1.34 to $1.38-$1.40 vs $1.28 Est",
+   "type": "guidance",
+   "direction": "positive"
+  },
+  {
+   "symbol": "APPN",
+   "company": "Appian Corporation Class A Common Stock",
+   "headline": "DA Davidson Maintains Neutral on Appian, Raises Price Target to $60",
+   "type": "analyst_note",
+   "direction": "positive"
+  },
+  {
+   "symbol": "APPN",
+   "company": "Appian Corporation Class A Common Stock",
+   "headline": "Appian Sees Q4 Adj EPS $0.30-$0.34 vs $0.37 Est; Sees Sales $233.000M-$237.000M vs $226.431M Est",
+   "type": "guidance",
+   "direction": "mixed"
+  },
+  {
+   "symbol": "APPN",
+   "company": "Appian Corporation Class A Common Stock",
+   "headline": "TD Cowen Maintains Hold on Appian, Raises Price Target to $50",
+   "type": "analyst_note",
+   "direction": "positive"
+  },
+  {
+   "symbol": "IBEX",
+   "company": "IBEX Limited Common Shares",
+   "headline": "RBC Raises Price Target on IBEX Limited",
+   "type": "analyst_note",
+   "direction": "positive"
+  },
+  {
+   "symbol": "IBEX",
+   "company": "IBEX Limited Common Shares",
+   "headline": "IBEX Sees FY2027 Sales $700.000M-$715.000M vs $678.500M Est",
+   "type": "guidance",
+   "direction": "positive"
+  },
+  {
+   "symbol": "IBEX",
+   "company": "IBEX Limited Common Shares",
+   "headline": "ibex Announces Entry Into Egypt With New Service Delivery Center In Cairo To Support Clients",
+   "type": "business_update",
+   "direction": "positive"
+  },
+  {
+   "symbol": "IBEX",
+   "company": "IBEX Limited Common Shares",
+   "headline": "Insider Selling by IBEX Limited Executive",
+   "type": "insider_sale",
+   "direction": "negative"
+  },
+  {
+   "symbol": "PCRX",
+   "company": "Pacira BioSciences, Inc. Common Stock",
+   "headline": "Needham Downgrades Pacira BioSciences to Hold",
+   "type": "analyst_note",
+   "direction": "negative"
+  },
+  {
+   "symbol": "PCRX",
+   "company": "Pacira BioSciences, Inc. Common Stock",
+   "headline": "Ingram Micro To Replace Pacira Biosciences In the S&P SmallCap 600 Effective Prior To The Opening",
+   "type": "index_change",
+   "direction": "negative"
+  },
+  {
+   "symbol": "PCRX",
+   "company": "Pacira BioSciences, Inc. Common Stock",
+   "headline": "Viatris Subsidiary Peach Purchaser Sub Commences Tender Offer To Acquire Pacira Biosciences For $36",
+   "type": "acquisition_target",
+   "direction": "positive"
+  },
+  {
+   "symbol": "DFIN",
+   "company": "Donnelley Financial Solutions, Inc. Common Stock",
+   "headline": "DA Davidson Maintains Buy on Donnelley Financial Solns, Raises Price Target to $76",
+   "type": "analyst_note",
+   "direction": "positive"
+  },
+  {
+   "symbol": "DFIN",
+   "company": "Donnelley Financial Solutions, Inc. Common Stock",
+   "headline": "DFIN CEO Files Form 144 for Proposed Sale of Common Stock",
+   "type": "insider_sale",
+   "direction": "negative"
+  },
+  {
+   "symbol": "DFIN",
+   "company": "Donnelley Financial Solutions, Inc. Common Stock",
+   "headline": "Donnelley Financial Solutions Named #1 Technology Company on BPI's Most Loved Workplaces List",
+   "type": "business_update",
+   "direction": "positive"
+  },
+  {
+   "symbol": "PCOR",
+   "company": "Procore Technologies, Inc. Common Stock",
+   "headline": "JP Morgan Maintains Overweight on Procore Technologies, Raises Price Target to $74",
+   "type": "analyst_note",
+   "direction": "positive"
+  },
+  {
+   "symbol": "PCOR",
+   "company": "Procore Technologies, Inc. Common Stock",
+   "headline": "e2Companies Receives Innovation Intelligence Award at Procore's Groundbreak 2026",
+   "type": "business_update",
+   "direction": "unclear"
+  },
+  {
+   "symbol": "PCOR",
+   "company": "Procore Technologies, Inc. Common Stock",
+   "headline": "Procore Technologies Reports Q3 2026 Financial Results and Sets Q4 Guidance",
+   "type": "earnings_results",
+   "direction": "unclear"
+  },
+  {
+   "symbol": "KNSA",
+   "company": "Kiniksa Pharmaceuticals International, plc Class A Ordinary Shares",
+   "headline": "Wedbush Adjusts Price Target on Kiniksa Pharmaceuticals",
+   "type": "analyst_note",
+   "direction": "unclear"
+  },
+  {
+   "symbol": "KNSA",
+   "company": "Kiniksa Pharmaceuticals International, plc Class A Ordinary Shares",
+   "headline": "Kiniksa Pharmaceuticals to Present at Jefferies Global Healthcare Conference",
+   "type": "business_update",
+   "direction": "unclear"
+  },
+  {
+   "symbol": "KNSA",
+   "company": "Kiniksa Pharmaceuticals International, plc Class A Ordinary Shares",
+   "headline": "Kiniksa Pharmaceuticals International Insider Sold Shares Worth $14,330,278",
+   "type": "insider_sale",
+   "direction": "negative"
+  },
+  {
+   "symbol": "VYX",
+   "company": "NCR Voyix Corporation Common Stock",
+   "headline": "NCR Voyix Inks Agreement With First Watch Restaurants Group For Deployment Of Aloha Next At ~600 U.S",
+   "type": "contract_or_partnership",
+   "direction": "positive"
+  },
+  {
+   "symbol": "VYX",
+   "company": "NCR Voyix Corporation Common Stock",
+   "headline": "NCR Voyix Announces Multi-Year Agreement With Sbarro To Deploy Point-Of-Sale And Payments",
+   "type": "contract_or_partnership",
+   "direction": "positive"
+  },
+  {
+   "symbol": "VYX",
+   "company": "NCR Voyix Corporation Common Stock",
+   "headline": "Stephens Initiates Coverage of NCR Voyix with Equal Weight Rating",
+   "type": "analyst_note",
+   "direction": "unclear"
+  },
+  {
+   "symbol": "VYX",
+   "company": "NCR Voyix Corporation Common Stock",
+   "headline": "Stephens & Co. Reinstates Equal-Weight on NCR Voyix, Announces $12 Price Target",
+   "type": "analyst_note",
+   "direction": "unclear"
+  }
+ ]
+}

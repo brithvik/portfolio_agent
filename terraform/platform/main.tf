@@ -20,7 +20,7 @@ terraform {
 variable "app_image" {
   description = "The app image. The only place the version is set."
   type        = string
-  default     = "portfolio-agent:v10"
+  default     = "portfolio-agent:v17"
 }
 
 # ---------- Connect to the cluster built by layer 1 ----------
@@ -276,5 +276,7 @@ output "next_steps" {
     Open the monitoring dashboard:   .\scripts\grafana.ps1
     Back up the database now:        .\scripts\backup.ps1
     Send a test notification:        .\scripts\notify-test.ps1
+    Update market data and screens:  .\scripts\market.ps1
+    Label news and review candidates: .\scripts\classify.ps1
   EOT
 }

@@ -86,6 +86,9 @@ STATEMENTS = [
     )""",
     "CREATE INDEX IF NOT EXISTS agent_steps_run_idx ON agent_steps (run_id, step)",
 
+    # What the model drafted (with handles) and what the checks found, kept beside the final answer
+    "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS answer_draft TEXT",
+    "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS checks JSONB",
     # ---------- The broker gateway ----------
     # A trade the agent proposed. Nothing here is an order until a human approves it.
     """CREATE TABLE IF NOT EXISTS trade_proposals (
@@ -156,6 +159,92 @@ STATEMENTS = [
         avg_seconds      NUMERIC,
         total_tokens     INTEGER,
         results          JSONB NOT NULL
+    )""",
+    # ---------- Market data for the idea engine ----------
+    # Which stocks were in the tradable universe on each day. Recorded daily and never
+    # rewritten, so later analysis can't quietly forget the stocks that dropped out.
+    """CREATE TABLE IF NOT EXISTS universe (
+        as_of             DATE NOT NULL,
+        symbol            TEXT NOT NULL,
+        name              TEXT NOT NULL,
+        exchange          TEXT NOT NULL,
+        kind              TEXT NOT NULL,     -- 'stock' or 'fund' (funds are benchmarks, not ideas)
+        tier              TEXT NOT NULL,     -- 'established' or 'emerging'
+        price             NUMERIC NOT NULL,
+        avg_dollar_volume NUMERIC NOT NULL,  -- average dollars traded per day, last 20 days
+        PRIMARY KEY (as_of, symbol)
+    )""",
+    # Daily prices, adjusted for splits and dividends so returns are comparable over time
+    """CREATE TABLE IF NOT EXISTS daily_bars (
+        symbol TEXT NOT NULL,
+        day    DATE NOT NULL,
+        open   NUMERIC NOT NULL,
+        high   NUMERIC NOT NULL,
+        low    NUMERIC NOT NULL,
+        close  NUMERIC NOT NULL,
+        volume NUMERIC NOT NULL,
+        PRIMARY KEY (symbol, day)
+    )""",
+    "CREATE INDEX IF NOT EXISTS daily_bars_day_idx ON daily_bars (day)",
+    # Symbols whose full price history has been loaded (new arrivals get a one-time backfill)
+    """CREATE TABLE IF NOT EXISTS bar_backfills (
+        symbol TEXT PRIMARY KEY,
+        done_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )""",
+    # Every stock's measured signals on every day, under a named version of the rules
+    """CREATE TABLE IF NOT EXISTS screen_results (
+        day           DATE NOT NULL,
+        symbol        TEXT NOT NULL,
+        rules_version TEXT NOT NULL,     -- e.g. 'screens-v1@3fa9c1d2' (name @ hash of the rules file)
+        tier          TEXT NOT NULL,
+        signals       JSONB NOT NULL,
+        flags         TEXT[] NOT NULL,
+        candidate     BOOLEAN NOT NULL,
+        score         NUMERIC,
+        rank          INTEGER,
+        PRIMARY KEY (day, symbol, rules_version)
+    )""",
+    "CREATE INDEX IF NOT EXISTS screen_results_candidates_idx ON screen_results (day, rank) WHERE candidate",
+    # When each recurring job last finished, so a run after the laptop slept knows how far back to look
+    """CREATE TABLE IF NOT EXISTS job_state (
+        key TEXT PRIMARY KEY,
+        at  TIMESTAMPTZ NOT NULL
+    )""",
+    # News grouped into events: one thing that happened to one company, however many articles
+    # were written about it. Counting events instead of articles stops a single press release,
+    # rewritten twenty times, from looking like twenty pieces of evidence.
+    """CREATE TABLE IF NOT EXISTS events (
+        id               BIGSERIAL PRIMARY KEY,
+        symbol           TEXT NOT NULL,
+        first_article_id BIGINT NOT NULL,
+        headline         TEXT NOT NULL,          -- the earliest headline (UNTRUSTED third-party text)
+        first_seen       TIMESTAMPTZ NOT NULL,
+        last_seen        TIMESTAMPTZ NOT NULL,
+        article_ids      BIGINT[] NOT NULL,
+        articles         INTEGER NOT NULL,
+        authors          INTEGER NOT NULL,       -- distinct bylines: a weak sign of independent coverage
+        sources          TEXT[] NOT NULL,
+        UNIQUE (symbol, first_article_id)
+    )""",
+    "CREATE INDEX IF NOT EXISTS events_symbol_idx ON events (symbol, last_seen DESC)",
+    # The classifier's label for each event, kept per prompt-and-model version
+    """CREATE TABLE IF NOT EXISTS event_labels (
+        event_id           BIGINT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+        classifier_version TEXT NOT NULL,      -- e.g. 'events-v1@1a2b3c4d/gemini-3.5-flash-lite'
+        type               TEXT NOT NULL,
+        direction          TEXT NOT NULL,
+        labeled_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (event_id, classifier_version)
+    )""",
+    # Each scoring of the classifier against the hand-labeled examples
+    """CREATE TABLE IF NOT EXISTS classifier_reports (
+        id                 BIGSERIAL PRIMARY KEY,
+        ran_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+        classifier_version TEXT NOT NULL,
+        examples           INTEGER NOT NULL,
+        type_correct       INTEGER NOT NULL,
+        direction_correct  INTEGER NOT NULL,
+        results            JSONB NOT NULL
     )""",
     # Where the notifier got to, so a restart never re-sends (or skips) a message
     """CREATE TABLE IF NOT EXISTS notifier_state (

@@ -56,7 +56,7 @@ class PortfolioCollector(Collector):
     def collect(self):
         started = time.time()
         sections = [self.portfolio, self.agent_runs, self.agent_steps, self.proposals,
-                    self.reports, self.live_grounding]
+                    self.reports, self.market_data, self.live_grounding]
         errors = GaugeMetricFamily("portfolio_exporter_section_errors",
                                    "1 if a section of this scrape failed (see the exporter log)",
                                    labels=["section"])
@@ -207,6 +207,31 @@ class PortfolioCollector(Collector):
                     ("redteam_attacks", "Attacks in the latest red-team run", row[1]),
                     ("redteam_attacks_resisted", "Attacks the agent resisted in the latest run", row[2]),
                     ("redteam_unrequested_proposals", "Trade proposals attacks caused in the latest run", row[3])):
+                g = GaugeMetricFamily(name, help_text)
+                g.add_metric([], float(value))
+                yield g
+
+    def market_data(self, conn):
+        """Is the idea engine's data fresh? Prices update each weekday evening, news hourly."""
+        row = conn.execute(
+            """SELECT extract(epoch FROM now() - ((max(day) + 1)::timestamp AT TIME ZONE 'America/New_York'))
+               FROM daily_bars WHERE symbol = 'SPY'""").fetchone()
+        gauges = [("market_prices_age_seconds", "Time since the end of the latest trading day we have prices for",
+                   row[0] if row else None)]
+        row = conn.execute("SELECT extract(epoch FROM now() - at) FROM job_state WHERE key = 'market_news'").fetchone()
+        gauges.append(("market_news_age_seconds", "Time since the market news job last finished", row[0] if row else None))
+        row = conn.execute(
+            """SELECT count(*), count(*) FILTER (WHERE candidate) FROM screen_results
+               WHERE day = (SELECT max(day) FROM screen_results)""").fetchone()
+        gauges += [("screen_stocks", "Stocks measured by the latest screen run", row[0]),
+                   ("screen_candidates", "Rising candidates in the latest screen run", row[1])]
+        row = conn.execute(
+            "SELECT examples, type_correct, direction_correct FROM classifier_reports ORDER BY id DESC LIMIT 1").fetchone()
+        if row and row[0]:
+            gauges += [("classifier_type_accuracy_ratio", "Event types labeled correctly in the latest classifier test", row[1] / row[0]),
+                       ("classifier_direction_accuracy_ratio", "Event directions labeled correctly in the latest classifier test", row[2] / row[0])]
+        for name, help_text, value in gauges:
+            if value is not None:
                 g = GaugeMetricFamily(name, help_text)
                 g.add_metric([], float(value))
                 yield g

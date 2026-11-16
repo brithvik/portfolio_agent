@@ -147,3 +147,20 @@ def test_market_hours():
     assert not market_hours(ny(2026, 11, 13, 14, 0))    # Fri 9:00 AM ET, before the open
     assert not market_hours(ny(2026, 11, 13, 21, 30))   # Fri 4:30 PM ET, after the close
     assert not market_hours(ny(2026, 11, 14, 16, 0))    # Saturday
+
+
+def test_market_data_freshness_and_classifier_accuracy(conn):
+    conn.execute("TRUNCATE daily_bars, job_state, screen_results, classifier_reports")
+    m = scrape(PortfolioCollector(TEST_DB))
+    assert ("market_prices_age_seconds",) not in m and m[("screen_stocks",)] == 0     # nothing yet: no fake age
+    conn.execute("INSERT INTO daily_bars VALUES ('SPY', current_date - 3, 1, 1, 1, 1, 1)")
+    conn.execute("INSERT INTO job_state VALUES ('market_news', now() - interval '2 hours')")
+    conn.execute("INSERT INTO screen_results VALUES (current_date, 'A', 'v', 'emerging', '{}', '{}', true, 1, 1), "
+                 "(current_date, 'B', 'v', 'emerging', '{}', '{}', false, 0, NULL)")
+    conn.execute("INSERT INTO classifier_reports (classifier_version, examples, type_correct, direction_correct, results) "
+                 "VALUES ('v', 40, 38, 36, '[]')")
+    m = scrape(PortfolioCollector(TEST_DB))
+    assert 1.9 * 86400 < m[("market_prices_age_seconds",)] < 3.1 * 86400       # counted from that day's end
+    assert 7100 < m[("market_news_age_seconds",)] < 7300
+    assert m[("screen_stocks",)] == 2 and m[("screen_candidates",)] == 1
+    assert m[("classifier_type_accuracy_ratio",)] == pytest.approx(0.95)
