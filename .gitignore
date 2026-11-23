@@ -5,3 +5,11 @@ __pycache__/
 *.tfstate.*
 .terraform/
 terraform/**/*-config
+terraform.tfvars
+cloud-backups/
+migrate.sql.gz
+
+terraform.tfvars
+cloud-backups/
+migrate.sql.gz
+.vscode/

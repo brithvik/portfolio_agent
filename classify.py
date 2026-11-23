@@ -79,6 +79,23 @@ TOP_CANDIDATES = 60
 LOOKBACK_DAYS = 90
 LABELED_EXAMPLES = Path(__file__).parent / "evals" / "event_labels.json"
 
+# Version of the rules below. The ledger stamps it on every idea, so a change shows in the record.
+# flags-v2: a takeover counts only when the model is sure it's good for shareholders (an offer
+# for the whole company); "unclear" takeover labels and partial tender offers no longer count.
+FLAGS_VERSION = "flags-v2"
+_PARTIAL_TENDER = re.compile(r"\bup to\b.*\bshares\b|\bpartial\b", re.I)
+
+
+def counts_as_takeover(kind, direction, headline=""):
+    """Is this label strong enough evidence that the company itself is being bought?
+
+    Real misses this guards against: "Naviam to Acquire Cohesive from Bentley Systems" (Bentley
+    selling a unit; the model said takeover but 'unclear'), and Beretta's tender for "up to
+    2,400,184" Ruger shares (part of the company: the price isn't tied to an offer).
+    """
+    return kind == "acquisition_target" and direction == "positive" and not _PARTIAL_TENDER.search(headline or "")
+
+
 # What each label means for a candidate. Decided here in code, never by the model.
 # (flag, label types, directions that trigger it, how recent in days, what the reader is told)
 FLAGS = [
@@ -252,7 +269,7 @@ def run(conn, labeler, limit=MAX_PER_RUN, pause=4.0):
 
 
 def flags_for(labels, today):
-    """labels: list of (type, direction, last_seen date). Returns the flags that apply.
+    """labels: list of (type, direction, last_seen date[, headline]). Returns the flags that apply.
 
     A pending takeover overrides everything else: nothing about the business matters to the
     price once it is tied to an offer. Results get ONE verdict from all recent results and
@@ -260,13 +277,15 @@ def flags_for(labels, today):
     rather than "strong" and "weak" at once.
     """
     found = []
+    labels = [(item[0], item[1], item[2], item[3] if len(item) > 3 else "") for item in labels]
     for flag, types_, directions, days, _ in FLAGS:
         if any(t in types_ and (directions is None or d in directions) and (today - seen).days <= days
-               for t, d, seen in labels):
+               and (flag != "deal_pending" or counts_as_takeover(t, d, h))
+               for t, d, seen, h in labels):
             found.append(flag)
     if "deal_pending" in found:
         return ["deal_pending"]
-    verdicts = {d for t, d, seen in labels if t in RESULTS and (today - seen).days <= RESULTS_DAYS}
+    verdicts = {d for t, d, seen, _ in labels if t in RESULTS and (today - seen).days <= RESULTS_DAYS}
     if "mixed" in verdicts or {"positive", "negative"} <= verdicts:
         found.append("mixed_results")
     elif "negative" in verdicts:
@@ -287,10 +306,23 @@ _ANALYST = re.compile(rf"\bPrice Target\b|\b(Upgrades|Downgrades|Initiates Cover
                       rf"\b(Maintains|Reiterates)\s+{_RATING}\b", re.I)
 
 
+# A results or outlook notice that states no outcome ("X Reports Third Quarter Results"). The
+# model tended to call these positive; a headline with no verdict in it is "unclear".
+_NOTICE = re.compile(r"\b(Reports|Announces|Provides)\b.*\b(Results|Outlook|Guidance)\b", re.I)
+_VERDICT = re.compile(r"\b(Beats?|Miss(es)?|Raises?|Raised|Lowers?|Lowered|Cuts?|Record|Strong|Weak|Above|Below|Exceeds?|"
+                      r"Tops?|Falls?|Surges?|Jumps?|Grows?|Growth|Declines?|Loss|Profit|Up|Down|vs)\b|\d", re.I)
+
+
+_PERIOD = re.compile(r"\b(Quarter|Q[1-4]|Fiscal|FY|Full[- ]Year|Annual|Financial)\b", re.I)   # it is about a reporting period
+
+
 def template_label(headline):
     """(type, direction) for a formulaic headline, or None if it needs the model."""
     if _TRANSCRIPT.search(headline):
         return ("earnings_results", "unclear")
+    notice = _NOTICE.search(headline) if _PERIOD.search(headline) else None
+    if notice and not _VERDICT.search(re.sub(r"\b(Q[1-4]|FY|20\d\d|First|Second|Third|Fourth)\b|\d{4}", "", headline, flags=re.I)):
+        return ("guidance" if notice.group(1).lower() == "provides" else "earnings_results", "unclear")
     if _ANALYST.search(headline):
         if re.search(r"\b(Downgrades|Lowers|Cuts)\b", headline, re.I):
             return ("analyst_note", "negative")
@@ -302,15 +334,54 @@ def template_label(headline):
 
 def label_by_template(conn):
     """Label every pending formulaic headline in code. Returns how many."""
-    template_version = prompt_version() + "template-v1"
+    template_version = prompt_version() + "template-v2"
     done = 0
-    for event_id, _, _, headline in pending(conn, prompt_version(), 100_000):
+    # Every event without a label from the current patterns, including ones the model already
+    # labeled: where a pattern applies, its label is the newer one and wins.
+    for event_id, _, _, headline in pending(conn, template_version, 100_000):
         label = template_label(headline)
         if label:
             done += conn.execute(
                 """INSERT INTO event_labels (event_id, classifier_version, type, direction)
                    VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING""", (event_id, template_version, *label)).rowcount
     return done
+
+
+def evidence_order(event, today):
+    """Sort key: the headlines that triggered a flag come first, so a flag always shows its evidence."""
+    kind, direction, seen, headline, _ = event
+    triggered = bool(flags_for([(kind, direction, seen, headline)], today))
+    return (not triggered, direction == "unclear", IMPORTANCE[kind], -seen.timestamp())
+
+
+def assess(conn):
+    """Today's top candidates, each with its labeled events and flags.
+
+    Returns (day, [{"symbol", "rank", "tier", "flags", "status", "events", "signals", "rules_version"}]),
+    where status is 'shortlist' or 'set_aside'. The ledger records exactly this.
+    """
+    day = conn.execute("SELECT max(day) FROM screen_results").fetchone()[0]
+    if day is None:
+        return None, []
+    candidates = conn.execute(
+        """SELECT symbol, rank, tier, signals, rules_version FROM screen_results
+           WHERE day = %s AND candidate AND rank <= %s ORDER BY rank""", (day, TOP_CANDIDATES)).fetchall()
+    rows = conn.execute(
+        """SELECT DISTINCT ON (e.id) e.symbol, l.type, l.direction, e.last_seen, e.headline, e.articles
+           FROM events e JOIN event_labels l ON l.event_id = e.id
+           WHERE e.symbol = ANY(%s) AND e.last_seen > now() - make_interval(days => %s)
+           ORDER BY e.id, l.labeled_at DESC""", ([c[0] for c in candidates], LOOKBACK_DAYS)).fetchall()
+    by_symbol = {}
+    for symbol, kind, direction, seen, headline, articles in rows:
+        by_symbol.setdefault(symbol, []).append((kind, direction, seen, headline, articles))
+    today = conn.execute("SELECT now()").fetchone()[0]
+    out = []
+    for symbol, rank, tier, signals, rules_version in candidates:
+        events_ = sorted(by_symbol.get(symbol, []), key=lambda e: evidence_order(e, today))
+        flags = flags_for([(k, d, seen, h) for k, d, seen, h, _ in events_], today)
+        out.append({"symbol": symbol, "rank": rank, "tier": tier, "flags": flags, "events": events_, "signals": signals,
+                    "rules_version": rules_version, "status": "set_aside" if EXCLUDING & set(flags) else "shortlist"})
+    return day, out
 
 
 def review(conn, top=20, per_stock=3):
@@ -335,7 +406,7 @@ def review(conn, top=20, per_stock=3):
     shortlist, set_aside = [], []
     for symbol, rank, tier in candidates:
         events_ = by_symbol.get(symbol, [])
-        flags = flags_for([(k, d, seen) for k, d, seen, _, _ in events_], today)
+        flags = flags_for([(k, d, seen, h) for k, d, seen, h, _ in events_], today)
         (set_aside if EXCLUDING & set(flags) else shortlist).append((symbol, rank, tier, flags, events_))
 
     lines = [f"Candidate review for {day}: {len(shortlist)} on the shortlist, {len(set_aside)} set aside by the rules "
@@ -351,7 +422,7 @@ def review(conn, top=20, per_stock=3):
             for flag in flags:
                 lines.append(f"      - {meaning[flag]}")
             # informative first: a headline with a verdict beats a transcript notice; then substance; then recency
-            ordered = sorted(events_, key=lambda e: (e[1] == "unclear", IMPORTANCE[e[0]], -e[2].timestamp()))
+            ordered = sorted(events_, key=lambda e: evidence_order(e, today))
             for kind, direction, seen, headline, _ in ordered[:per_stock]:
                 lines.append(f"      {seen:%b %d}  {kind}/{direction}: {headline[:95]}")
     lines.append("\nLabels come from a model reading third-party headlines; flags are fixed rules applied to those labels. "

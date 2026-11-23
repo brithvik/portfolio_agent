@@ -20,11 +20,27 @@ terraform {
 variable "app_image" {
   description = "The app image. The only place the version is set."
   type        = string
-  default     = "portfolio-agent:v17"
+  default     = "portfolio-agent:v20"
+}
+
+variable "kube_context" {
+  description = <<-EOT
+    Empty: deploy to the kind cluster on this laptop (layer 1 in terraform/cluster).
+    A context name (cloud-up.ps1 passes "portfolio-aws"): deploy to that cluster from ~/.kube/config.
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "grafana_replicas" {
+  description = "1 runs Grafana all the time. The 2 GB cloud server runs it only on demand (grafana.ps1 -Cloud)."
+  type        = number
+  default     = 1
 }
 
 # ---------- Connect to the cluster built by layer 1 ----------
 data "terraform_remote_state" "cluster" {
+  count   = var.kube_context == "" ? 1 : 0
   backend = "local"
   config = {
     path = "${path.module}/../cluster/terraform.tfstate"
@@ -32,7 +48,13 @@ data "terraform_remote_state" "cluster" {
 }
 
 locals {
-  cluster = data.terraform_remote_state.cluster.outputs
+  on_kind = var.kube_context == ""
+  # try(): in the cloud there is no kind state to read, and these are simply unused
+  cluster = {
+    for key in ["endpoint", "client_certificate", "client_key", "cluster_ca_certificate", "cluster_name"] :
+    key => try(data.terraform_remote_state.cluster[0].outputs[key], null)
+  }
+  kubeconfig = pathexpand("~/.kube/config")
 
   # Read the Alpaca keys from your .env file, so secrets live in one place.
   env_lines = [
@@ -45,28 +67,71 @@ locals {
   }
 }
 
+# On kind, connect with the certificates layer 1 produced; in the cloud, with a kubeconfig
+# context (the API is reached through the Systems Manager tunnel, see cloud-tunnel.ps1).
 provider "kubernetes" {
-  host                   = local.cluster.endpoint
-  client_certificate     = local.cluster.client_certificate
-  client_key             = local.cluster.client_key
-  cluster_ca_certificate = local.cluster.cluster_ca_certificate
+  host                   = local.on_kind ? local.cluster.endpoint : null
+  client_certificate     = local.on_kind ? local.cluster.client_certificate : null
+  client_key             = local.on_kind ? local.cluster.client_key : null
+  cluster_ca_certificate = local.on_kind ? local.cluster.cluster_ca_certificate : null
+  config_path            = local.on_kind ? null : local.kubeconfig
+  config_context         = local.on_kind ? null : var.kube_context
 }
 
 provider "kubectl" {
-  host                   = local.cluster.endpoint
-  client_certificate     = local.cluster.client_certificate
-  client_key             = local.cluster.client_key
-  cluster_ca_certificate = local.cluster.cluster_ca_certificate
-  load_config_file       = false
+  host                   = local.on_kind ? local.cluster.endpoint : null
+  client_certificate     = local.on_kind ? local.cluster.client_certificate : null
+  client_key             = local.on_kind ? local.cluster.client_key : null
+  cluster_ca_certificate = local.on_kind ? local.cluster.cluster_ca_certificate : null
+  load_config_file       = !local.on_kind
+  config_path            = local.on_kind ? null : local.kubeconfig
+  config_context         = local.on_kind ? null : var.kube_context
 }
 
 # ---------- The app image ----------
-# kind can't pull images from your laptop on its own, so copy it in.
+# kind can't pull images from your laptop on its own, so copy it in. (In the cloud the image
+# comes from GitHub's container registry, published by CI for both Intel and ARM.)
 resource "terraform_data" "load_image" {
+  count            = local.on_kind ? 1 : 0
   triggers_replace = [var.app_image, local.cluster.endpoint]
 
   provisioner "local-exec" {
     command = "kind load docker-image ${var.app_image} --name ${local.cluster.cluster_name}"
+  }
+}
+
+# ---------- Pulling a private image (optional) ----------
+# If the image on GitHub's registry is private, put a token that can read packages in .env as
+# GHCR_PULL_TOKEN (plus GHCR_USER). Every pod then pulls with it, through the default service
+# account. A public image needs neither.
+locals {
+  ghcr_token = trimspace(lookup(local.env, "GHCR_PULL_TOKEN", ""))
+}
+
+resource "kubernetes_secret_v1" "ghcr" {
+  count = local.ghcr_token == "" ? 0 : 1
+  metadata {
+    name = "ghcr-pull"
+  }
+  type = "kubernetes.io/dockerconfigjson"
+  data = {
+    ".dockerconfigjson" = jsonencode({
+      auths = {
+        "ghcr.io" = {
+          auth = base64encode("${lookup(local.env, "GHCR_USER", "token")}:${local.ghcr_token}")
+        }
+      }
+    })
+  }
+}
+
+resource "kubernetes_default_service_account_v1" "default" {
+  count = local.ghcr_token == "" ? 0 : 1
+  metadata {
+    namespace = "default"
+  }
+  image_pull_secret {
+    name = kubernetes_secret_v1.ghcr[0].metadata[0].name
   }
 }
 
@@ -240,7 +305,8 @@ locals {
 data "kubectl_path_documents" "app" {
   pattern = "${path.module}/../../k8s/*.yaml"
   vars = {
-    app_image = var.app_image # fills in ${app_image} inside the YAML files
+    app_image        = var.app_image # fills in ${app_image} inside the YAML files
+    grafana_replicas = var.grafana_replicas
   }
 }
 
@@ -251,6 +317,7 @@ resource "kubectl_manifest" "app" {
 
   depends_on = [
     terraform_data.load_image,
+    kubernetes_default_service_account_v1.default,
     kubernetes_secret_v1.postgres,
     kubernetes_secret_v1.alpaca,
     kubernetes_secret_v1.gemini,
@@ -278,5 +345,6 @@ output "next_steps" {
     Send a test notification:        .\scripts\notify-test.ps1
     Update market data and screens:  .\scripts\market.ps1
     Label news and review candidates: .\scripts\classify.ps1
+    Record ideas, show the scoreboard: .\scripts\ledger.ps1
   EOT
 }

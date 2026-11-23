@@ -1,0 +1,4 @@
+# Copy this file to terraform.tfvars (which git ignores) and fill it in.
+alert_email = "you@example.com"
+# region        = "us-east-1"
+# instance_type = "t4g.small"

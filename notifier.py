@@ -2,6 +2,7 @@
 
   - each daily briefing, as soon as the agent finishes writing it
   - each new trade proposal that is waiting for your decision
+  - each day's new ideas from the idea engine (a short digest written by ledger.py)
 
 (Alerts are sent separately by Alertmanager; see k8s/notifications.yaml.)
 
@@ -36,7 +37,9 @@ SOURCES = {
     "proposal": """SELECT id, symbol, side, notional, rationale, expires_at, read_untrusted
                    FROM trade_proposals WHERE status = 'pending' AND id > %s ORDER BY id LIMIT %s""",
 }
-NEWEST = {"briefing": "SELECT coalesce(max(id), 0) FROM agent_runs",
+SOURCES["digest"] = "SELECT id, body, created_at FROM idea_digests WHERE id > %s ORDER BY id LIMIT %s"
+NEWEST = {"digest": "SELECT coalesce(max(id), 0) FROM idea_digests",
+          "briefing": "SELECT coalesce(max(id), 0) FROM agent_runs",
           "proposal": "SELECT coalesce(max(id), 0) FROM trade_proposals"}
 
 
@@ -70,7 +73,11 @@ def format_proposal(row):
     return clip("\n".join(lines), MAX_CHARS)
 
 
-FORMATTERS = {"briefing": format_briefing, "proposal": format_proposal}
+def format_digest(row):
+    return clip(row[1], MAX_CHARS)      # written by ledger.py; includes third-party headlines, so mentions stay off
+
+
+FORMATTERS = {"briefing": format_briefing, "proposal": format_proposal, "digest": format_digest}
 
 
 def send_to_discord(webhook_url, content):

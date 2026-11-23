@@ -1,5 +1,5 @@
 {
- "about": "Real headlines from the first market run (Nov 2026), labeled by hand. Labels were drafted with AI help and are waiting for the project owner's review; company names are approximate. Known weakness: few negative examples. Add more with scripts/export-events.ps1.",
+ "about": "Real headlines from the first market runs (Nov 2026), labeled by hand. Labels were drafted with AI help and are waiting for the project owner's review; company names are approximate. Includes headlines the model got wrong on its first run (results notices with no stated outcome). Known weakness: still few negative examples. Add more with scripts/export-events.ps1.",
  "examples": [
   {
    "symbol": "JAKK",
@@ -329,6 +329,111 @@
    "headline": "Stephens & Co. Reinstates Equal-Weight on NCR Voyix, Announces $12 Price Target",
    "type": "analyst_note",
    "direction": "unclear"
+  },
+  {
+   "symbol": "DFIN",
+   "company": "Donnelley Financial Solutions, Inc. Common Stock",
+   "headline": "Donnelley Financial Solutions, Inc. Provides Q4 Revenue Outlook",
+   "type": "guidance",
+   "direction": "unclear"
+  },
+  {
+   "symbol": "DFIN",
+   "company": "Donnelley Financial Solutions, Inc. Common Stock",
+   "headline": "DFIN Reports Third-Quarter 2026 Results",
+   "type": "earnings_results",
+   "direction": "unclear"
+  },
+  {
+   "symbol": "KNSA",
+   "company": "Kiniksa Pharmaceuticals International, plc Class A Ordinary Shares",
+   "headline": "Kiniksa Pharmaceuticals Reports Third Quarter 2026 Financial Results",
+   "type": "earnings_results",
+   "direction": "unclear"
+  },
+  {
+   "symbol": "INTA",
+   "company": "Intapp, Inc. Common Stock",
+   "headline": "Intapp, Inc. Reports Q1 Fiscal 2027 Financial Results and Provides Guidance",
+   "type": "earnings_results",
+   "direction": "unclear"
+  },
+  {
+   "symbol": "INTA",
+   "company": "Intapp, Inc. Common Stock",
+   "headline": "Intapp Sees Q2 Adj EPS $0.37-$0.39 vs $0.40 Est; Sees Sales $158.800M-$159.800M vs $160.798M Est",
+   "type": "guidance",
+   "direction": "negative"
+  },
+  {
+   "symbol": "INTA",
+   "company": "Intapp, Inc. Common Stock",
+   "headline": "Intapp Raises FY2027 Adj EPS Guidance from $1.58-$1.62 to $1.64-$1.68 vs $1.60 Est",
+   "type": "guidance",
+   "direction": "positive"
+  },
+  {
+   "symbol": "CART",
+   "company": "Maplebear Inc. Common Stock",
+   "headline": "DoorDash Confirms To Acquire Instacart At $65.00 Per Share At Valuation Of ~$17B",
+   "type": "acquisition_target",
+   "direction": "positive"
+  },
+  {
+   "symbol": "CART",
+   "company": "Maplebear Inc. Common Stock",
+   "headline": "Maplebear Q3 EPS $0.60 Misses $0.63 Estimate, Sales $1.095B Beat $1.071B Estimate",
+   "type": "earnings_results",
+   "direction": "mixed"
+  },
+  {
+   "symbol": "CART",
+   "company": "Maplebear Inc. Common Stock",
+   "headline": "Law Firms Investigate Proposed Acquisition of Instacart by DoorDash",
+   "type": "legal_or_investigation",
+   "direction": "negative"
+  },
+  {
+   "symbol": "PCRX",
+   "company": "Pacira BioSciences, Inc. Common Stock",
+   "headline": "Viatris Bets Big on Non-Opioid Painkillers With Pacira Buyout",
+   "type": "acquisition_target",
+   "direction": "positive"
+  },
+  {
+   "symbol": "MAX",
+   "company": "MediaAlpha, Inc. Class A Common Stock",
+   "headline": "MediaAlpha CEO Steven Yi Sells 420,000 Shares",
+   "type": "insider_sale",
+   "direction": "negative"
+  },
+  {
+   "symbol": "MAX",
+   "company": "MediaAlpha, Inc. Class A Common Stock",
+   "headline": "MediaAlpha Announces $16 Million Private Stock Repurchase",
+   "type": "financing",
+   "direction": "positive"
+  },
+  {
+   "symbol": "BHC",
+   "company": "Bausch Health Companies Inc. Common Stock",
+   "headline": "Bausch Health Companies Announces $50M Buyback Plan",
+   "type": "financing",
+   "direction": "positive"
+  },
+  {
+   "symbol": "APPN",
+   "company": "Appian Corporation Class A Common Stock",
+   "headline": "Appian's Defense Cloud Achieves Impact Level 5 Provisional Authorization To Operate From U.S. DoD",
+   "type": "product_or_regulatory",
+   "direction": "positive"
+  },
+  {
+   "symbol": "MTW",
+   "company": "The Manitowoc Company, Inc. Common Stock",
+   "headline": "Manitowoc Co Q3 Adj. EPS $0.30 Beats $0.20 Estimate, Sales $613.800M Beat $577.100M Estimate",
+   "type": "earnings_results",
+   "direction": "positive"
   }
  ]
 }

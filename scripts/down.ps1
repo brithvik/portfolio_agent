@@ -9,6 +9,7 @@ foreach ($layer in "platform", "cluster") {
     Push-Location (Join-Path $root "terraform\$layer")
     try {
         terraform init -input=false
+        if ($layer -eq "platform") { terraform workspace select default | Out-Null }   # the laptop, never the cloud
         terraform destroy -auto-approve
         if ($LASTEXITCODE -ne 0) { throw "terraform destroy failed in $layer" }
     } finally {

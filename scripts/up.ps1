@@ -8,6 +8,7 @@ foreach ($layer in "cluster", "platform") {
     Push-Location (Join-Path $root "terraform\$layer")
     try {
         terraform init -input=false
+        if ($layer -eq "platform") { terraform workspace select default | Out-Null }   # the laptop, never the cloud
         if ($LASTEXITCODE -ne 0) { throw "terraform init failed in $layer" }
         terraform apply -auto-approve
         if ($LASTEXITCODE -ne 0) { throw "terraform apply failed in $layer" }
@@ -15,4 +16,5 @@ foreach ($layer in "cluster", "platform") {
         Pop-Location
     }
 }
-Write-Host "`nAll up. Run: kubectl get pods" -ForegroundColor Green
+& "$PSScriptRoot\use-laptop.ps1" | Out-Null
+Write-Host "`nAll up, and kubectl points at the laptop cluster. Run: kubectl get pods" -ForegroundColor Green

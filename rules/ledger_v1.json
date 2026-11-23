@@ -1,0 +1,14 @@
+{
+  "version": "ledger-v1",
+  "note": "Fixed before any outcomes were known. Changing anything here means a new file (ledger_v2.json) and a separate scoreboard.",
+  "reviewed_per_day": 60,
+  "cooldown_days": 60,
+  "controls_per_idea": 3,
+  "horizons_trading_days": [5, 20, 60],
+  "primary_metric": "Average return minus the S&P 500 fund over 20 trading days: shortlist ideas compared with their matched random controls.",
+  "primary_horizon": 20,
+  "entry": "The opening price on the first trading day after the idea was recorded.",
+  "exit": "The closing price on the last day of the horizon. A stock that stops trading keeps its last price.",
+  "minimum_to_report_a_difference": 30,
+  "needed_to_detect_a_1pct_edge": 400
+}

@@ -1,0 +1,63 @@
+#!/bin/bash
+# Runs once, on the server's first boot (Terraform passes it in as user data).
+# Sets up swap, installs k3s, and schedules backups to S3. Logs: /var/log/cloud-init-output.log
+set -euxo pipefail
+
+# ---------- Swap: 2 GB of memory is tight, so give the kernel room to breathe ----------
+if [ ! -f /swapfile ]; then
+  dd if=/dev/zero of=/swapfile bs=1M count=2048
+  chmod 600 /swapfile
+  mkswap /swapfile
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+swapon /swapfile || true
+sysctl -w vm.swappiness=10
+echo 'vm.swappiness=10' > /etc/sysctl.d/90-swappiness.conf
+
+# ---------- k3s ----------
+# --disable traefik/servicelb: nothing is exposed, so no ingress or load balancer is needed
+# --secrets-encryption: Kubernetes secrets are encrypted on disk
+# k3s enforces NetworkPolicies out of the box, so the project's 14 policies apply here too.
+curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION='${k3s_version}' sh -s - server \
+  --disable traefik --disable servicelb \
+  --secrets-encryption \
+  --write-kubeconfig-mode 600 \
+  --kubelet-arg=system-reserved=memory=200Mi \
+  '--kubelet-arg=eviction-hard=memory.available<100Mi'
+
+until /usr/local/bin/kubectl get nodes >/dev/null 2>&1; do sleep 3; done
+
+# ---------- Backups to S3, nightly ----------
+# The backup CronJob (k8s/backup.yaml) writes restore-tested dumps to a volume on this disk.
+# This timer copies them to S3 using the server's own AWS role; pods never see that role.
+cat > /usr/local/bin/portfolio-backup-to-s3 <<'SCRIPT'
+#!/bin/bash
+set -euo pipefail
+dir=$(ls -d /var/lib/rancher/k3s/storage/*_default_postgres-backups 2>/dev/null | head -1 || true)
+if [ -z "$dir" ]; then echo "No backup volume yet"; exit 0; fi
+aws s3 sync "$dir" "s3://${bucket}/postgres/" --region '${region}' --exclude '*' --include 'portfolio-*.sql.gz' --only-show-errors
+echo "Synced $(ls "$dir"/portfolio-*.sql.gz 2>/dev/null | wc -l) backups to s3://${bucket}/postgres/"
+SCRIPT
+chmod 755 /usr/local/bin/portfolio-backup-to-s3
+
+cat > /etc/systemd/system/portfolio-backup-to-s3.service <<'UNIT'
+[Unit]
+Description=Copy verified database backups to S3
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/portfolio-backup-to-s3
+UNIT
+
+cat > /etc/systemd/system/portfolio-backup-to-s3.timer <<'UNIT'
+[Unit]
+Description=Copy database backups to S3 every night
+[Timer]
+OnCalendar=*-*-* 23:30:00 UTC
+Persistent=true
+[Install]
+WantedBy=timers.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable --now portfolio-backup-to-s3.timer
+echo "Server setup finished."

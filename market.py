@@ -177,6 +177,9 @@ def update(conn, trading, data, rules, now=None):
         f"Checking them against the floor "
         f"(price >= ${rules['floor']['min_price']:g}, >= ${rules['floor']['min_avg_dollar_volume']:,.0f} traded a day)...")
 
+    # Stocks in the ledger keep getting prices even if they later fall below the floor.
+    # Otherwise the ideas that went badly would quietly drop out of the results.
+    tracked = {r[0] for r in conn.execute("SELECT DISTINCT symbol FROM ideas WHERE decided_at > now() - interval '150 days'")}
     members, reload = {}, set()
     for i in range(0, len(symbols), CHUNK):
         bars = fetch_bars(data, symbols[i:i + CHUNK], end - timedelta(days=RECENT_DAYS), end)
@@ -188,6 +191,8 @@ def update(conn, trading, data, rules, now=None):
             if verdict:
                 members[symbol] = verdict
                 keep[symbol] = series
+            elif symbol in tracked:
+                keep[symbol] = series           # prices only: it is not in today's universe
         reload |= adjusted_since_stored(conn, keep)
         save_bars(conn, keep)
         if (i // CHUNK) % 20 == 19:

@@ -114,8 +114,10 @@ The dashboard is a Python file. Terraform deploys the generated JSON and Grafana
 |---|---|
 | **Docker** | One slim Python 3.12 image, non-root user, built and scanned with Trivy in CI. |
 | **Kubernetes** | CronJobs (New York time zone), Deployments, a Postgres StatefulSet, 14 NetworkPolicies, resource limits, health probes. |
-| **Terraform** | Two layers. `cluster` creates the kind cluster. `platform` deploys everything on it, generates random passwords, and reads API keys from `.env`. Swapping the first layer is all it takes to move to a cloud cluster. |
-| **CI** | GitHub Actions with actions pinned to commit SHAs: Ruff, 149 tests against a real Postgres (including the agent loop driven by a scripted stand-in model), `terraform fmt` and `validate`, kubeconform on every manifest, image build and Trivy scan. |
+| **Terraform** | Layer 1 builds a cluster: `cluster` makes a kind cluster on the laptop, `aws` makes the cloud one. Layer 2, `platform`, deploys everything onto either, unchanged, generating random passwords and reading API keys from `.env`. |
+| **AWS** | One ARM server (t4g.small) running k3s, inside the free plan's credits (about $18 a month, with a budget alarm). No inbound ports at all: you reach it through an AWS Systems Manager tunnel. Pods can't reach the server's AWS role (IMDSv2, hop limit 1). Disk and Kubernetes secrets are encrypted. Nightly restore-tested backups are copied to a private S3 bucket. |
+| **Images** | CI builds every passing commit for Intel and ARM, with an SBOM and provenance, and publishes it to GitHub's container registry tagged with the commit. The cloud deploys exactly that tag. |
+| **CI** | GitHub Actions with actions pinned to commit SHAs: Ruff, 172 tests against a real Postgres (including the agent loop driven by a scripted stand-in model), `terraform fmt` and `validate`, kubeconform on every manifest, image build and Trivy scan. |
 
 ---
 
@@ -141,6 +143,16 @@ docker build -t portfolio-agent:v10 .
 .\scripts\down.ps1
 ```
 
+On AWS (the AWS CLI and Session Manager plugin installed, signed in, and your email in `terraform\aws\terraform.tfvars`):
+
+```powershell
+.\scripts\cloud-up.ps1           # build the server, deploy the image CI published for this commit
+.\scripts\migrate-to-cloud.ps1   # once: move the laptop's database to the cloud
+.\scripts\cloud-tunnel.ps1       # the only way in; every other script then works against the cloud
+.\scripts\grafana.ps1 -Cloud     # Grafana runs on demand on the 2 GB server
+.\scripts\cloud-down.ps1         # download every backup, then delete everything on AWS
+```
+
 Tests: `python -m pytest`. Database tests run when `TEST_DATABASE_URL` points at a throwaway Postgres; they empty the tables, so never point it at real data.
 
 ---
@@ -161,4 +173,4 @@ tests/      policy, gateway, egress proxy, grounding, metrics, agent loop, notif
 
 ## Honest limits
 
-Paper trading only, and the agent is not a trading strategy. Single-node local cluster, no high availability: it collects data only while the laptop is on, and backups sit on the same disk as the database (they guard against bad data, not a lost machine). The LLM can still be wrong; the design assumes that and checks for it instead of hoping.
+Paper trading only, and the agent is not a trading strategy. Single node, no high availability: one server, laptop or cloud. The AWS free plan ends after six months; after that it is a paid account (about $18 a month) or a move, which `cloud-down.ps1` makes easy by downloading every backup first. The LLM can still be wrong; the design assumes that and checks for it instead of hoping.

@@ -247,7 +247,7 @@ kind: Deployment
 metadata:
   name: grafana
 spec:
-  replicas: 1
+  replicas: ${grafana_replicas}   # 1 on the laptop; 0 on the 2 GB cloud server until you open it (grafana.ps1 -Cloud)
   selector:
     matchLabels: { app: grafana }
   template:

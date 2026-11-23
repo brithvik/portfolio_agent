@@ -246,6 +246,30 @@ STATEMENTS = [
         direction_correct  INTEGER NOT NULL,
         results            JSONB NOT NULL
     )""",
+    # The ledger: every idea the engine produced, recorded once with what was known at that
+    # moment. Rows are never updated or deleted; outcomes are computed from prices afterwards.
+    """CREATE TABLE IF NOT EXISTS ideas (
+        id           BIGSERIAL PRIMARY KEY,
+        day          DATE NOT NULL,                  -- the market day whose data produced it
+        decided_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+        symbol       TEXT NOT NULL,
+        kind         TEXT NOT NULL,                  -- 'shortlist', 'set_aside', or 'control'
+        parent_id    BIGINT REFERENCES ideas(id),    -- for a control: the idea it is matched to
+        rank         INTEGER,
+        tier         TEXT NOT NULL,
+        flags        TEXT[] NOT NULL DEFAULT '{}',
+        evidence     JSONB NOT NULL DEFAULT '{}',    -- signals and labeled headlines at decision time
+        rules        TEXT NOT NULL                   -- screen rules + ledger rules versions
+    )""",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ideas_once_idx ON ideas (day, symbol, kind, coalesce(parent_id, 0))",
+    "CREATE INDEX IF NOT EXISTS ideas_symbol_idx ON ideas (symbol, decided_at DESC)",
+    # One message per day's new ideas, for the notifier to send
+    """CREATE TABLE IF NOT EXISTS idea_digests (
+        id         BIGSERIAL PRIMARY KEY,
+        day        DATE NOT NULL UNIQUE,
+        body       TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )""",
     # Where the notifier got to, so a restart never re-sends (or skips) a message
     """CREATE TABLE IF NOT EXISTS notifier_state (
         key     TEXT PRIMARY KEY,       -- 'briefing' or 'proposal'

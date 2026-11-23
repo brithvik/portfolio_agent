@@ -106,6 +106,19 @@ def test_formulaic_headlines_are_labeled_by_pattern():
     assert classify.template_label("BBB Foods Q3 2026 Earnings Call Transcript") == ("earnings_results", "unclear")
 
 
+def test_a_results_notice_that_states_no_outcome_is_unclear_not_positive():
+    # Real: the model called all of these "positive" on its first run
+    for headline, kind in (("DFIN Reports Third-Quarter 2026 Results", "earnings_results"),
+                           ("Kiniksa Pharmaceuticals Reports Third Quarter 2026 Financial Results", "earnings_results"),
+                           ("Donnelley Financial Solutions, Inc. Provides Q4 Revenue Outlook", "guidance")):
+        assert classify.template_label(headline) == (kind, "unclear"), headline
+    # a notice that does state an outcome, or is not about a reporting period, still goes to the model
+    for headline in ("Stagwell Reports Third Quarter 2026 Financial Results and Raises Full-Year Guidance",
+                     "IBEX Limited Reports Record First Quarter Fiscal 2027 Financial Results",
+                     "Acme Announces Results of Pivotal Trial", "Acme Reports 12% Revenue Growth in Third Quarter Results"):
+        assert classify.template_label(headline) is None, headline
+
+
 def test_headlines_that_need_reading_are_left_for_the_model():
     for headline in ("Viatris Commences Tender Offer To Acquire Pacira Biosciences For $36",
                      "Acme Maintains Focus on Growth Despite Weak Demand",
@@ -200,10 +213,10 @@ def test_only_candidates_events_are_labeled_and_only_once(conn):
     labeler = ScriptedLabeler()
     assert classify.run(conn, labeler, pause=0) == 3               # DULL is not a candidate; the broker note needs no model
     assert classify.run(conn, labeler, pause=0) == 0               # nothing left to do
-    assert conn.execute("SELECT count(*) FROM event_labels WHERE classifier_version LIKE '%template-v1'").fetchone()[0] == 1
+    assert conn.execute("SELECT count(*) FROM event_labels WHERE classifier_version LIKE '%template-v2'").fetchone()[0] == 1
     stored = dict(conn.execute("SELECT e.headline, l.type FROM event_labels l JOIN events e ON e.id = l.event_id").fetchall())
     assert stored["Bigco Commences Tender Offer To Acquire DEAL Corp For $36"] == "acquisition_target"
-    assert conn.execute("SELECT DISTINCT classifier_version FROM event_labels WHERE classifier_version NOT LIKE '%template-v1'").fetchone()[0] == classify.version("test-model")
+    assert conn.execute("SELECT DISTINCT classifier_version FROM event_labels WHERE classifier_version NOT LIKE '%template-v2'").fetchone()[0] == classify.version("test-model")
 
 
 @needs_db
@@ -223,7 +236,7 @@ def test_the_review_sets_aside_the_takeover_and_flags_the_insider_sale(conn):
 def test_garbage_from_the_model_stores_nothing(conn):
     assert classify.run(conn, ScriptedLabeler(garbage=True), pause=0) == 0
     # only the one broker note, labeled by pattern, is stored: nothing from the model's reply
-    assert conn.execute("SELECT count(*) FROM event_labels WHERE classifier_version NOT LIKE '%template-v1'").fetchone()[0] == 0
+    assert conn.execute("SELECT count(*) FROM event_labels WHERE classifier_version NOT LIKE '%template-v2'").fetchone()[0] == 0
     assert conn.execute("SELECT count(*) FROM event_labels").fetchone()[0] == 1
 
 
@@ -300,3 +313,31 @@ def test_an_event_labeled_by_the_fallback_is_not_labeled_again(conn):
     assert classify.run(conn, first, pause=0) == 3
     assert classify.run(conn, ScriptedLabeler(), pause=0) == 0
     assert conn.execute("SELECT count(*) FROM event_labels WHERE classifier_version LIKE '%/fallback-model'").fetchone()[0] == 3
+
+
+
+# ---------- flags-v2: real false takeovers from the Nov 18 review ----------
+def test_a_company_selling_a_unit_is_not_being_taken_over():
+    labels = [("acquisition_target", "unclear", days_ago(5), "Naviam to Acquire Cohesive from Bentley Systems")]
+    assert classify.flags_for(labels, NOW) == []
+
+
+def test_a_partial_tender_offer_does_not_pin_the_price():
+    headline = "Beretta Begins Cash Tender Offer To Purchase Up To 2,400,184 Sturm Ruger Shares At $44.80 Per Share"
+    assert classify.flags_for([("acquisition_target", "positive", days_ago(5), headline)], NOW) == []
+
+
+def test_real_takeovers_still_count():
+    for headline in ("Salesforce Enters Definitive Agreement to Acquire Braze for $5.66 Billion",
+                     "Varonis Systems Agrees To Be Acquired By Thoma Bravo's Proofpoint For ~$6.3B In Cash",
+                     "Viatris Subsidiary Peach Purchaser Sub Commences Tender Offer To Acquire Pacira Biosciences For $36.50"):
+        assert classify.flags_for([("acquisition_target", "positive", days_ago(20), headline)], NOW) == ["deal_pending"], headline
+
+
+def test_the_evidence_for_a_flag_is_listed_first():
+    today = NOW
+    events_ = [("earnings_results", "positive", days_ago(3), "Q3 EPS Beats", 2),
+               ("product_or_regulatory", "positive", days_ago(1), "Launches Product", 1),
+               ("acquisition_target", "positive", days_ago(30), "Bigco To Acquire Us For $40", 1)]
+    ordered = sorted(events_, key=lambda e: classify.evidence_order(e, today))
+    assert ordered[0][3] == "Bigco To Acquire Us For $40"
