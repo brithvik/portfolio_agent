@@ -5,8 +5,9 @@
 #   2. Terraform   formatting and validation of both layers
 #   3. Kubernetes  every manifest validated against the official Kubernetes schemas
 #   4. Image       the Docker image builds, then gets scanned for known vulnerabilities
-#   5. Publish     on main only, after 1-4 pass: the image is built for Intel and ARM and pushed
-#                  to GitHub's container registry, tagged with the commit, for the AWS server
+#   5. Publish     on main only, after 1-4 pass: the image is built for Intel and for ARM, each on
+#                  a native machine, then combined under one tag in GitHub's container registry
+#                  (tagged with the commit) for the AWS server
 #
 # What CI deliberately does NOT run: the red-team and evaluation suites. They call the real
 # Gemini API and need a key, so they run on the cluster with .\scripts\redteam.ps1 and
@@ -140,18 +141,22 @@ jobs:
           exit-code: "1"
           skip-setup-trivy: true   # reuse the copy installed by the step above
 
-  publish:
-    name: Publish the image (Intel and ARM)
+  publish-arch:
+    name: Publish the image (${{ matrix.arch }})
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [python, terraform, kubernetes, image]   # only code that passed every check is published
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    strategy:
+      matrix:
+        include:
+          - { arch: amd64, runner: ubuntu-24.04 }
+          - { arch: arm64, runner: ubuntu-24.04-arm }   # a real ARM machine: free for public repos, no emulation
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
     permissions:
       contents: read
-      packages: write      # this job alone may write to the registry
+      packages: write      # these jobs alone may write to the registry
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
-      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1   # v4.4.0 (builds ARM on an Intel runner)
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069   # v4.4.1
       - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550   # v4.8.0
         with:
@@ -167,10 +172,33 @@ jobs:
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc   # v7.4.0
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/${{ matrix.arch }}
           push: true
           provenance: true
           sbom: true           # a record of every package inside the image, published with it
-          tags: |
-            ${{ steps.name.outputs.image }}:${{ steps.name.outputs.tag }}
-            ${{ steps.name.outputs.image }}:main
+          tags: ${{ steps.name.outputs.image }}:${{ steps.name.outputs.tag }}-${{ matrix.arch }}
+
+  publish:
+    name: Publish the image (combine Intel and ARM)
+    needs: [publish-arch]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069   # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550   # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: One tag for both machines
+        run: |
+          owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          image="ghcr.io/$owner/portfolio-agent"
+          tag="sha-$(git rev-parse --short=7 HEAD)"
+          # A multi-platform tag: an Intel laptop pulls the amd64 image, the AWS ARM server the arm64 one
+          docker buildx imagetools create -t "$image:$tag" -t "$image:main" "$image:$tag-amd64" "$image:$tag-arm64"
+          docker buildx imagetools inspect "$image:$tag"
