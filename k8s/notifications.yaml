@@ -31,6 +31,21 @@ spec:
     spec:
       automountServiceAccountToken: false
       securityContext: { runAsNonRoot: true, runAsUser: 1000 }
+      initContainers:
+        # Waits until this pod's network rules are in force, then exits (netgate.py). Fails closed.
+        - name: netgate
+          image: ${app_image}
+          imagePullPolicy: IfNotPresent
+          command: ["python", "netgate.py"]
+          env:
+            - { name: NETGATE_REQUIRE, value: "" }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { memory: 16Mi, cpu: 10m }
+            limits: { memory: 64Mi }
       containers:
         - name: notify-proxy
           image: ${app_image}
@@ -135,6 +150,21 @@ spec:
     spec:
       automountServiceAccountToken: false
       securityContext: { runAsNonRoot: true, runAsUser: 1000 }
+      initContainers:
+        # Waits until this pod's network rules are in force, then exits (netgate.py). Fails closed.
+        - name: netgate
+          image: ${app_image}
+          imagePullPolicy: IfNotPresent
+          command: ["python", "netgate.py"]
+          env:
+            - { name: NETGATE_REQUIRE, value: "postgres:5432,notify-proxy:3128" }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { memory: 16Mi, cpu: 10m }
+            limits: { memory: 64Mi }
       containers:
         - name: notifier
           image: ${app_image}

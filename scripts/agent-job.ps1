@@ -48,6 +48,21 @@ spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
+      initContainers:
+        # Waits until this pod's network rules are in force (netgate.py): fails closed
+        - name: netgate
+          image: $image
+          imagePullPolicy: IfNotPresent
+          command: ["python", "netgate.py"]
+          env:
+            - { name: NETGATE_REQUIRE, value: "postgres:5432,egress-proxy:3128" }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { memory: 16Mi, cpu: 10m }
+            limits: { memory: 64Mi }
       containers:
         - name: agent
           image: $image
@@ -79,10 +94,15 @@ spec:
 $yaml | kubectl apply -f - | Out-Null
 if ($LASTEXITCODE -ne 0) { Write-Host "Couldn't start the job." -ForegroundColor Red; exit 1 }
 
-# Wait for the pod to start, then follow its output
-for ($i = 0; $i -lt 90; $i++) {
+# Wait for the pod to start (the netgate init container runs first), then follow its output
+for ($i = 0; $i -lt 150; $i++) {
     $phase = kubectl get pods -l job-name=$name -o jsonpath="{.items[0].status.phase}" 2>$null
     if ($phase -in "Running", "Succeeded", "Failed") { break }
     Start-Sleep 1
 }
-kubectl logs -f "job/$name"
+kubectl logs "job/$name" -c netgate 2>$null      # how long the network rules took to apply
+if ($phase -eq "Failed") {
+    Write-Host "The pod refused to start because its network rules never applied (see the line above)." -ForegroundColor Red
+    exit 1
+}
+kubectl logs -f "job/$name" -c agent

@@ -59,7 +59,7 @@ CHECKS = [
 
 
 def main():
-    print("Network check, from inside an agent pod\n")
+    print("Network check, from inside an agent pod (started behind netgate, like every pod)\n")
     print(f"  {'Destination':<46} {'Expected':<10} {'Result':<10} Detail")
     failures, leaks = [], []
     for name, probe, should_pass in CHECKS:

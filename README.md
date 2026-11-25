@@ -82,7 +82,7 @@ flowchart LR
 
 **4. News is treated as hostile.** Headlines are untrusted input and are labelled that way in the prompt, with a provenance flag on the data. A red-team suite fires 10 prompt-injection attacks plus 2 control cases. The latest run resisted all 10.
 
-**5. The network is the last line of defence.** Even a fully compromised agent cannot reach the broker or the open internet: 14 NetworkPolicies enforce default-deny with explicit allowlists. `netcheck` starts a pod in the agent's exact network position and tries 12 connections for real, including the notification path the agent must not be able to use; it fails loudly if any rule is not actually enforced. Pods run non-root with a read-only root filesystem, dropped capabilities, and no service-account token.
+**5. The network is the last line of defence.** Even a fully compromised agent cannot reach the broker or the open internet: 14 NetworkPolicies enforce default-deny with explicit allowlists. `netcheck` starts a pod in the agent's exact network position and tries 12 connections for real, including the notification path the agent must not be able to use; it fails loudly if any rule is not actually enforced. Some network plugins (k3s's included) apply a new pod's rules a few seconds after it starts; netcheck caught an agent pod reaching the internet in that window on the AWS server. So every pod now starts behind `netgate`, an init container that waits until a forbidden connection is actually refused and its required ones accepted, and fails closed if that never happens. Pods run non-root with a read-only root filesystem, dropped capabilities, and no service-account token.
 
 ---
 
