@@ -6,7 +6,8 @@
 # While it runs, every scheduled job in the cloud is paused, and the cloud's (nearly empty)
 # database is replaced by the laptop's. Afterwards, stop the laptop cluster so the two don't
 # both run the daily jobs: docker stop portfolio-control-plane   (start it again any time).
-$ErrorActionPreference = "Stop"
+# Each step checks its own result; "Stop" would turn harmless warnings from aws/kubectl/docker into failures
+$ErrorActionPreference = "Continue"
 . "$PSScriptRoot\cloud-common.ps1"
 $laptop = kubectl config get-contexts -o name | Where-Object { $_ -like "kind-*" } | Select-Object -First 1
 if (-not $laptop) { Fail "No laptop (kind) cluster found in your kubeconfig." }
@@ -30,7 +31,13 @@ kubectl --context $cloudContext delete jobs --all --wait=true | Out-Null
 try {
     Write-Host "3/5 Copying the dump to the cloud and replacing the cloud database..."
     kubectl --context $cloudContext cp $file postgres-0:/tmp/migrate.sql.gz
-    kubectl --context $cloudContext exec postgres-0 -- sh -c 'psql -U portfolio -d postgres -v ON_ERROR_STOP=1 -c "DROP DATABASE portfolio WITH (FORCE)" -c "CREATE DATABASE portfolio OWNER portfolio" && gunzip -c /tmp/migrate.sql.gz | psql -U portfolio -d portfolio -q -v ON_ERROR_STOP=1 > /dev/null && rm /tmp/migrate.sql.gz'
+    # One argument per SQL statement, with no quotes nested inside quotes: Windows PowerShell
+    # strips inner double quotes when it passes arguments to programs like kubectl.
+    kubectl --context $cloudContext exec postgres-0 -- psql -U portfolio -d postgres -v ON_ERROR_STOP=1 -c "DROP DATABASE IF EXISTS portfolio WITH (FORCE)"
+    if ($LASTEXITCODE -ne 0) { throw "Couldn't clear the cloud database. Nothing was restored; run this script again." }
+    kubectl --context $cloudContext exec postgres-0 -- psql -U portfolio -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE portfolio OWNER portfolio"
+    if ($LASTEXITCODE -ne 0) { throw "Couldn't recreate the cloud database. Run this script again." }
+    kubectl --context $cloudContext exec postgres-0 -- sh -c 'gunzip -c /tmp/migrate.sql.gz | psql -U portfolio -d portfolio -q -v ON_ERROR_STOP=1 > /dev/null && rm /tmp/migrate.sql.gz'
     if ($LASTEXITCODE -ne 0) { throw "The restore failed. The cloud database may be empty; run this script again." }
 
     Write-Host "4/5 Checking the copy..."

@@ -52,6 +52,10 @@ spec:
                   set -euo pipefail
                   file=/backups/portfolio-$(date -u +%Y%m%dT%H%M%SZ).sql.gz
                   scratch=backup_verify
+                  # Some network plugins apply a new pod's rules a few seconds after it starts, so
+                  # Postgres may refuse the first connections. Wait for it (up to a minute).
+                  for i in $(seq 1 30); do pg_isready -q && break; echo "Waiting for Postgres to accept this pod ($i)..."; sleep 2; done
+                  pg_isready || { echo "Postgres never accepted the connection."; exit 1; }
                   rows() { psql -d "$1" -Atc "SELECT (SELECT count(*) FROM account_snapshots) + (SELECT count(*) FROM agent_runs)"; }
 
                   before=$(rows "$PGDATABASE")
