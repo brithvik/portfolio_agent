@@ -160,7 +160,12 @@ def test_market_data_freshness_and_classifier_accuracy(conn):
     conn.execute("INSERT INTO classifier_reports (classifier_version, examples, type_correct, direction_correct, results) "
                  "VALUES ('v', 40, 38, 36, '[]')")
     m = scrape(PortfolioCollector(TEST_DB))
-    assert 1.9 * 86400 < m[("market_prices_age_seconds",)] < 3.1 * 86400       # counted from that day's end
+    # Age is counted from the end of that trading day in New York. Work out the expected value
+    # the same way instead of assuming a range: "current_date" is UTC, so in the New York
+    # evening the age is under 2 days (this test used to fail after 7 PM Eastern).
+    expected = conn.execute("""SELECT extract(epoch FROM now() - ((current_date - 2)::timestamp
+                                AT TIME ZONE 'America/New_York'))""").fetchone()[0]
+    assert m[("market_prices_age_seconds",)] == pytest.approx(float(expected), abs=60)
     assert 7100 < m[("market_news_age_seconds",)] < 7300
     assert m[("screen_stocks",)] == 2 and m[("screen_candidates",)] == 1
     assert m[("classifier_type_accuracy_ratio",)] == pytest.approx(0.95)
